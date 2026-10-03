@@ -1,0 +1,22 @@
+[package]
+name = "syncly-desktop"
+description = "App desktop do Syncly"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+serde.workspace = true
+syncly-service.workspace = true
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-single-instance = "2"
+tracing.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true

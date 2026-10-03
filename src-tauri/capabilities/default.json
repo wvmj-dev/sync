@@ -1,0 +1,19 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Permissões mínimas da janela principal (SEG-30)",
+  "windows": ["main"],
+  "permissions": [
+    "core:event:default",
+    "dialog:allow-open",
+    "dialog:allow-ask",
+    "allow-app-info",
+    "allow-list-accounts",
+    "allow-add-local-account",
+    "allow-remove-account",
+    "allow-list-jobs",
+    "allow-save-job",
+    "allow-delete-job",
+    "allow-preview-job"
+  ]
+}

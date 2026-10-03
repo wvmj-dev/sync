@@ -1,0 +1,25 @@
+# Rust
+/target/
+
+# Frontend
+node_modules/
+/dist/
+*.local
+
+# Tauri (gerado no build)
+/src-tauri/gen/schemas
+
+# SEG-05: credenciais nunca vão para o git
+google-client.json
+client_secret*.json
+*.pem
+*.key
+.env
+.env.*
+
+# Logs e editores
+*.log
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store

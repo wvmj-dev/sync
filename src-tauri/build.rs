@@ -1,0 +1,20 @@
+// SEG-30: todo comando chamado pela webview precisa estar nesta lista E ser
+// liberado em capabilities/default.json. Comando fora da lista = bloqueado.
+const COMMANDS: &[&str] = &[
+    "app_info",
+    "list_accounts",
+    "add_local_account",
+    "remove_account",
+    "list_jobs",
+    "save_job",
+    "delete_job",
+    "preview_job",
+];
+
+fn main() {
+    tauri_build::try_build(
+        tauri_build::Attributes::new()
+            .app_manifest(tauri_build::AppManifest::new().commands(COMMANDS)),
+    )
+    .expect("falha ao gerar as permissões do app");
+}

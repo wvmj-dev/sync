@@ -1,0 +1,49 @@
+[workspace]
+resolver = "3"
+members = ["crates/core", "crates/gdrive", "crates/service", "crates/cli", "src-tauri"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+# 1.89: File::lock/try_lock estáveis (lock.rs)
+rust-version = "1.89"
+publish = false
+
+[workspace.dependencies]
+syncly-core = { path = "crates/core" }
+syncly-gdrive = { path = "crates/gdrive" }
+syncly-service = { path = "crates/service" }
+
+async-trait = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive"] }
+directories = "6"
+hex = "0.4"
+ignore = "0.4"
+md-5 = "0.11"
+rayon = "1"
+rusqlite = { version = "0.40", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+thiserror = "2"
+tokio = { version = "1", features = ["fs", "io-util", "rt", "sync", "macros"] }
+toml = "1"
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# SEG-50
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+unwrap_used = "warn"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+strip = true

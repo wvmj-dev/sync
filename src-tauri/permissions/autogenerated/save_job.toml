@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-save-job"
+description = "Enables the save_job command without any pre-configured scope."
+commands.allow = ["save_job"]
+
+[[permission]]
+identifier = "deny-save-job"
+description = "Denies the save_job command without any pre-configured scope."
+commands.deny = ["save_job"]
