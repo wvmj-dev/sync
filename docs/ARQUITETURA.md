@@ -90,7 +90,7 @@ src-tauri ──► service ──► gdrive ──► core
 ├── crates/
 │   ├── core/src/
 │   │   ├── domain/            # tipos e validações (account, job, schedule, rel_path, plan…)
-│   │   ├── sync/              # scanner, remote_tree, planner, guard, retry
+│   │   ├── sync/              # scanner, remote_tree, planner, guard, executor, retry
 │   │   ├── backup/            # retention (e, nas próximas fases, archive/restore)
 │   │   ├── providers/local.rs # LocalProvider
 │   │   ├── provider.rs        # trait StorageProvider + classificação de erros
@@ -101,8 +101,8 @@ src-tauri ──► service ──► gdrive ──► core
 │   │   ├── state.rs           # SQLite: índice, execuções, backups
 │   │   ├── lock.rs            # trava exclusiva por tarefa
 │   │   └── paths.rs           # diretórios XDG
-│   ├── gdrive/src/            # auth, query, error (+ client/provider na fase 1)
-│   ├── service/src/           # Service, dto, logging
+│   ├── gdrive/src/            # auth, oauth, client, provider, endpoints, query, error
+│   ├── service/src/           # Service, dto, google, transfers, secrets, logging
 │   └── cli/src/
 ├── src-tauri/
 │   ├── capabilities/default.json  # allowlist de comandos da janela
@@ -245,6 +245,9 @@ milhares, o que é mais rápido e muito mais gentil com as cotas da API.
 | `tar.zst` (padrão) + `zip` (opção) | Só zip | zstd é muito mais rápido e compacta melhor; zip para compatibilidade. |
 | `age` para criptografia | GPG; AES "caseiro" | Formato moderno e auditado, streaming, chave pública permite backup automático sem segredo em memória. |
 | `rustls` | OpenSSL | Sem dependência nativa, implementação memory-safe. |
+| `reqwest` 0.13 (HTTP/2, `rustls`) | crate `google-drive3` | Já citado acima; HTTP/2 reaproveita a conexão entre requisições. |
+| `keyring` 4 (Secret Service via `zbus`) | Arquivo cifrado próprio | Cofre do sistema (GNOME Keyring/KWallet), Rust puro, sem libdbus. |
+| `wiremock` nos testes | Testar contra a conta real | Testes do Drive rodam offline, sem credenciais (regra 9 do `AGENTS.md`). |
 | Varredura própria (`std::fs`) + `ignore::gitignore` só para padrões | Walker do crate `ignore` | Controle total de exclusões, `.syncignore` e erros — necessário para RN-27/RN-28. |
 | pnpm | npm, yarn | Instalação rápida e `node_modules` estrito (sem dependências fantasmas). |
 | Sem exclusão definitiva | — | Proteção contra bugs e erros humanos (lixeira do Drive guarda 30 dias). |
@@ -257,7 +260,9 @@ milhares, o que é mais rápido e muito mais gentil com as cotas da API.
 
 > Limitação conhecida da fase 0: o `LocalProvider` calcula o hash de cada arquivo do destino
 > a cada listagem. Para destinos locais grandes, um cache persistente entra na fase 2.
-| 1 | Login Google (PKCE + keyring), provedor Drive, executor, sync manual (modo envio/espelho), status | |
+| 1a | Login Google (PKCE + keyring), provedor Drive, transferências avulsas (enviar/baixar) | ✅ |
+| 1b | Executor, sync manual (modo envio/espelho) com progresso e cancelamento | ✅ |
+| 1c | Status e última modificação (RN-100 a RN-103) | |
 | 2 | Backups local/remoto, compactação, criptografia (age), retenção, restauração | |
 | 3 | Agendamento (systemd), notificações, bandeja | |
 | 4 | Changes API, download/bidirecional (requer decisão sobre escopo — ver SEG-03) | |

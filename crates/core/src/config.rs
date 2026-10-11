@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::domain::{Account, Job, ValidationContext};
+use crate::domain::{Account, AccountKind, Job, ValidationContext};
 use crate::error::{CoreError, CoreResult, IoContext, ValidationIssue};
 use crate::fsutil::write_atomic;
 
@@ -117,6 +117,38 @@ impl AppConfig {
             .find(|j| j.name.trim().eq_ignore_ascii_case(key.trim()))
     }
 
+    /// RN-19: destino local não pode estar dentro de uma fonte, nem conter uma — a cópia
+    /// passaria a copiar a si mesma a cada execução.
+    pub fn validate_local_destination(&self, job: &Job) -> Vec<ValidationIssue> {
+        let Some(sync) = &job.sync else {
+            return Vec::new();
+        };
+        let Some(AccountKind::Local { root }) =
+            self.account(sync.destination.account_id).map(|a| &a.kind)
+        else {
+            return Vec::new();
+        };
+        let dest = sync
+            .destination
+            .path
+            .components()
+            .fold(root.clone(), |acc, part| acc.join(part));
+        job.sources
+            .iter()
+            .filter(|source| dest.starts_with(source) || source.starts_with(&dest))
+            .map(|source| {
+                ValidationIssue::new(
+                    format!("tarefa '{}'", job.name.trim()),
+                    format!(
+                        "o destino '{}' e a fonte '{}' estão um dentro do outro",
+                        dest.display(),
+                        source.display()
+                    ),
+                )
+            })
+            .collect()
+    }
+
     pub fn validate(&self, app_dirs: &[PathBuf]) -> Vec<ValidationIssue> {
         let mut issues = Vec::new();
         let s = &self.settings;
@@ -170,6 +202,10 @@ impl AppConfig {
             {
                 issues.push(ValidationIssue::new(&label, "conta do backup não existe"));
             }
+        }
+
+        for job in &self.jobs {
+            issues.extend(self.validate_local_destination(job));
         }
 
         // RN-17: cada pasta remota tem um único dono.
@@ -275,6 +311,23 @@ mod tests {
             Err(CoreError::Invalid(_))
         ));
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn rn19_destino_local_dentro_da_fonte() {
+        let mut config = sample();
+        // Conta local em /mnt/hd; destino "Docs" → /mnt/hd/Docs.
+        config.jobs[0].sources = vec!["/mnt/hd".into()];
+        assert!(
+            config
+                .validate(&[])
+                .iter()
+                .any(|i| i.message.contains("um dentro do outro"))
+        );
+        config.jobs[0].sources = vec!["/mnt/hd/Docs/sub".into()];
+        assert!(!config.validate(&[]).is_empty());
+        config.jobs[0].sources = vec!["/home/u/Documentos".into()];
+        assert!(config.validate(&[]).is_empty());
     }
 
     #[test]

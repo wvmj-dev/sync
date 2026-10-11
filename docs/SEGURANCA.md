@@ -31,13 +31,14 @@ chaves de criptografia; integridade dos backups.
 
 ### Credenciais e OAuth
 
-- **SEG-01** — OAuth 2.0 para *app instalado*: PKCE (S256) + parâmetro `state` + redirecionamento para `http://127.0.0.1:<porta aleatória>`. O servidor local aceita **uma** requisição e fecha; expira em 5 minutos.
+- **SEG-01** — OAuth 2.0 para *app instalado*: PKCE (S256) + parâmetro `state` + redirecionamento para `http://127.0.0.1:<porta aleatória>`. O servidor local só aceita a resposta com o `state` correto — outras requisições são ignoradas e não abortam o login —, responde com uma página estática (nada da requisição é refletido) e fecha; expira em 5 minutos.
 - **SEG-02** — O login abre no **navegador do sistema**. O Google bloqueia OAuth em webviews embutidas, e o navegador mostra a URL real (anti-phishing).
 - **SEG-03** — Escopo único: `https://www.googleapis.com/auth/drive.file`. Ampliar escopo (ex.: para o modo bidirecional enxergar arquivos criados pelo site do Drive) será uma decisão explícita, opcional e documentada — nunca silenciosa.
 - **SEG-04** — Refresh tokens ficam no keyring do sistema (serviço `syncly`, entrada `account:<id>`). Access tokens só em memória.
 - **SEG-05** — `google-client.json` fica em `~/.config/syncly/` com permissão `0600` e **nunca** é versionado (`.gitignore`). O app recusa clientes do tipo `web` — só `installed` (app para computador).
 - **SEG-06** — "Desconectar" revoga o token em `https://oauth2.googleapis.com/revoke` antes de apagá-lo localmente.
 - **SEG-07** — Falha de renovação (`invalid_grant`) não gera novas tentativas: a conta é marcada para reautenticação (RN-06). Insistir com token inválido gera alertas de segurança.
+- **SEG-08** — O app confere o escopo que o usuário realmente concedeu (na tela do Google dá para desmarcar a permissão). Sem `drive.file`, a conexão falha com mensagem clara.
 
 ### Integridade e proteção dos dados
 
@@ -54,6 +55,7 @@ chaves de criptografia; integridade dos backups.
 - **SEG-22** — Units do systemd contêm apenas valores gerados pelo app (UUID da tarefa, caminho do binário). Expressões de agendamento passam por allowlist de caracteres (sem quebras de linha) e por `systemd-analyze calendar`.
 - **SEG-23** — Links simbólicos não são seguidos (RN-24), evitando sair da fonte e loops.
 - **SEG-24** — Filtros de arquivos sensíveis valem também para a própria fonte e não podem ser desfeitos por `.syncignore` (RN-22). O `config.toml` é tratado como entrada não confiável: cada tarefa é revalidada antes de executar (RN-40).
+- **SEG-25** — IDs vindos do Drive só entram em URLs se tiverem apenas letras, números, `-` e `_`; nomes remotos passam por `validate_name` antes de virar caminho local.
 
 ### Webview (Tauri)
 

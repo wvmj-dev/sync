@@ -14,12 +14,12 @@ const form = reactive({
   exclude: (props.job?.exclude ?? []).join("\n"),
   includeSensitive: props.job?.includeSensitive ?? false,
   accountId:
-    props.job?.sync?.accountId ?? props.accounts.find((a) => a.provider === "local")?.id ?? "",
+    props.job?.sync?.accountId ?? props.accounts[0]?.id ?? "",
   path: props.job?.sync?.path ?? "",
   mode: (props.job?.sync?.mode ?? "upload") as SyncMode,
 });
 
-const usableAccounts = computed(() => props.accounts.filter((a) => a.provider === "local"));
+const usableAccounts = computed(() => props.accounts);
 const canSave = computed(
   () => form.name.trim() && form.sources.length > 0 && form.accountId && form.path.trim(),
 );
@@ -84,7 +84,7 @@ function submit() {
           <option v-for="a in usableAccounts" :key="a.id" :value="a.id">{{ a.label }}</option>
         </select>
         <small v-if="!usableAccounts.length" class="muted">
-          Adicione uma pasta local em <RouterLink to="/contas">Contas</RouterLink>.
+          Conecte o Google Drive ou adicione uma pasta em <RouterLink to="/contas">Contas</RouterLink>.
         </small>
       </label>
       <label class="field">

@@ -9,6 +9,12 @@ const COMMANDS: &[&str] = &[
     "save_job",
     "delete_job",
     "preview_job",
+    "connect_google",
+    "list_remote",
+    "upload_file",
+    "download_file",
+    "run_job",
+    "cancel_run",
 ];
 
 fn main() {

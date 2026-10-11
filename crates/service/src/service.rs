@@ -1,45 +1,123 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
-use std::sync::{Mutex, PoisonError};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::Instant;
 
 use syncly_core::CoreError;
-use syncly_core::config::AppConfig;
+use syncly_core::config::{AppConfig, Settings};
 use syncly_core::domain::{
-    Account, AccountKind, Destination, GuardLimits, Job, RelPath, RunKind, Schedule, SkipReason,
-    SyncSettings, ValidationContext,
+    Account, AccountKind, Destination, GuardLimits, Job, Plan, RelPath, RunKind, RunStatus,
+    RunTrigger, Schedule, SkipReason, SyncSettings, ValidationContext,
 };
 use syncly_core::filters::Filter;
+use syncly_core::lock::JobLock;
 use syncly_core::paths::AppPaths;
 use syncly_core::provider::StorageProvider;
 use syncly_core::providers::LocalProvider;
 use syncly_core::state::StateDb;
-use syncly_core::sync::guard::{self, GuardInput};
+use syncly_core::sync::executor::{self, Execution, Progress};
+use syncly_core::sync::guard::{self, GuardInput, GuardVerdict};
 use syncly_core::sync::planner::{self, PlanInput};
-use syncly_core::sync::remote_tree::load_remote_tree;
-use syncly_core::sync::scanner::{self, ScanRequest};
+use syncly_core::sync::remote_tree::{RemoteTree, load_remote_tree};
+use syncly_core::sync::retry::RetryPolicy;
+use syncly_core::sync::scanner::{self, ScanRequest, ScanResult};
+use syncly_gdrive::HttpClient;
 use syncly_gdrive::auth::{ClientConfigError, load_client};
 use uuid::Uuid;
 
 use crate::dto::{
     AccountSummary, ActionView, AppInfo, JobDraft, JobSummary, MAX_PREVIEW_ACTIONS,
-    MAX_PREVIEW_WARNINGS, PlanPreview, SyncSummary,
+    MAX_PREVIEW_WARNINGS, PlanPreview, RunReport, SyncSummary, human_bytes,
 };
 use crate::error::{ServiceError, ServiceResult};
+use crate::google::GoogleBackend;
+use crate::secrets::{KeyringStore, SecretStore};
 
 /// Ponto de entrada dos casos de uso. A configuração é relida do disco a cada
 /// chamada (arquivo pequeno), então GUI e CLI sempre enxergam a mesma versão.
 pub struct Service {
-    paths: AppPaths,
+    pub(crate) paths: AppPaths,
     write_lock: Mutex<()>,
+    pub(crate) secrets: Arc<dyn SecretStore>,
+    pub(crate) google: GoogleBackend,
+    pub(crate) http: OnceLock<HttpClient>,
+    /// Execuções em andamento neste processo → sinal de cancelamento.
+    running: Mutex<HashMap<Uuid, Arc<AtomicBool>>>,
+}
+
+/// Resultado da preparação de uma execução.
+struct Prepared {
+    job: Job,
+    sync: SyncSettings,
+    settings: Settings,
+    provider: Box<dyn StorageProvider>,
+    scan: ScanResult,
+    remote: RemoteTree,
+    plan: Plan,
+    verdict: GuardVerdict,
+    first_run: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct RunOptions {
+    /// RN-36, RN-42: o usuário revisou e confirmou o plano.
+    pub confirm: bool,
+    pub trigger: RunTrigger,
+}
+
+/// Remove a execução do mapa ao terminar, mesmo com erro.
+struct RunningGuard<'a> {
+    map: &'a Mutex<HashMap<Uuid, Arc<AtomicBool>>>,
+    id: Uuid,
+}
+
+impl<'a> RunningGuard<'a> {
+    fn register(
+        map: &'a Mutex<HashMap<Uuid, Arc<AtomicBool>>>,
+        id: Uuid,
+        flag: Arc<AtomicBool>,
+    ) -> Self {
+        map.lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(id, flag);
+        Self { map, id }
+    }
+}
+
+impl Drop for RunningGuard<'_> {
+    fn drop(&mut self) {
+        self.map
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&self.id);
+    }
+}
+
+fn elapsed_ms(started: Instant) -> u64 {
+    u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
 
 impl Service {
+    /// Produção: keyring do sistema e endpoints reais do Google.
     pub fn open(paths: AppPaths) -> ServiceResult<Self> {
+        Self::with_backends(paths, Arc::new(KeyringStore), GoogleBackend::default())
+    }
+
+    /// Permite trocar o cofre e o Google — os testes usam memória e um servidor simulado.
+    pub fn with_backends(
+        paths: AppPaths,
+        secrets: Arc<dyn SecretStore>,
+        google: GoogleBackend,
+    ) -> ServiceResult<Self> {
         paths.ensure()?;
         Ok(Self {
             paths,
             write_lock: Mutex::new(()),
+            secrets,
+            google,
+            http: OnceLock::new(),
+            running: Mutex::new(HashMap::new()),
         })
     }
 
@@ -51,12 +129,15 @@ impl Service {
         &self.paths
     }
 
-    fn load(&self) -> ServiceResult<AppConfig> {
+    pub(crate) fn load(&self) -> ServiceResult<AppConfig> {
         Ok(AppConfig::load(&self.paths.config_file())?)
     }
 
     /// Lê → altera → valida → grava atomicamente. Uma alteração inválida nunca chega ao disco.
-    fn mutate<T>(&self, f: impl FnOnce(&mut AppConfig) -> ServiceResult<T>) -> ServiceResult<T> {
+    pub(crate) fn mutate<T>(
+        &self,
+        f: impl FnOnce(&mut AppConfig) -> ServiceResult<T>,
+    ) -> ServiceResult<T> {
         let _guard = self
             .write_lock
             .lock()
@@ -139,8 +220,16 @@ impl Service {
     }
 
     /// RN-05: as tarefas que usavam a conta são desativadas, não apagadas.
-    /// Fase 1: contas Google revogam o token antes (SEG-06).
-    pub fn remove_account(&self, id: Uuid) -> ServiceResult<()> {
+    /// Contas Google têm o acesso revogado e a credencial apagada do cofre (SEG-06).
+    pub async fn remove_account(&self, id: Uuid) -> ServiceResult<()> {
+        let account = self
+            .load()?
+            .account(id)
+            .cloned()
+            .ok_or(ServiceError::NotFound("conta"))?;
+        if matches!(account.kind, AccountKind::GoogleDrive { .. }) {
+            self.forget_google_credentials(id).await?;
+        }
         self.mutate(|config| {
             let before = config.accounts.len();
             config.accounts.retain(|a| a.id != id);
@@ -246,9 +335,9 @@ impl Service {
 
     // ---- Sincronização ----
 
-    /// Prévia: escaneia, lista o destino, planeja e avalia as guardas — sem alterar nada.
-    pub async fn preview_job(&self, id: Uuid) -> ServiceResult<PlanPreview> {
-        let started = Instant::now();
+    /// Varre, lista o destino, planeja e avalia as guardas — sem alterar nada.
+    /// Compartilhado pela prévia e pela execução, para as duas nunca divergirem.
+    async fn prepare(&self, id: Uuid) -> ServiceResult<Prepared> {
         let config = self.load()?;
         let job = config
             .job(id)
@@ -256,9 +345,10 @@ impl Service {
             .ok_or(ServiceError::NotFound("tarefa"))?;
         // O config.toml pode ter sido editado à mão: valida antes de tocar em qualquer arquivo.
         let app_dirs = self.paths.app_dirs();
-        let issues = job.validate(&ValidationContext {
+        let mut issues = job.validate(&ValidationContext {
             app_dirs: &app_dirs,
         });
+        issues.extend(config.validate_local_destination(&job));
         if !issues.is_empty() {
             return Err(CoreError::Invalid(issues).into());
         }
@@ -269,7 +359,7 @@ impl Service {
             .account(sync.destination.account_id)
             .cloned()
             .ok_or(ServiceError::NotFound("conta de destino"))?;
-        let provider = provider_for(&account)?;
+        let provider = self.provider_for(&account).await?;
 
         let state = self.state()?;
         let index = state.load_index(job.id)?;
@@ -314,53 +404,210 @@ impl Service {
             limits: sync.guard,
             first_run,
         });
+        Ok(Prepared {
+            job,
+            sync,
+            settings: config.settings,
+            provider,
+            scan,
+            remote,
+            plan,
+            verdict,
+            first_run,
+        })
+    }
 
-        let warnings = scan
+    /// Prévia: o que uma execução faria agora.
+    pub async fn preview_job(&self, id: Uuid) -> ServiceResult<PlanPreview> {
+        let started = Instant::now();
+        let p = self.prepare(id).await?;
+        let warnings = p
+            .scan
             .warnings
             .iter()
             .map(|w| w.describe())
             .chain(
-                remote
+                p.remote
                     .invalid_names
                     .iter()
                     .map(|n| format!("nome remoto ignorado: {n}")),
             )
             .take(MAX_PREVIEW_WARNINGS)
             .collect();
-
         tracing::info!(
-            job = %job.id,
-            actions = plan.actions.len(),
-            hashed = scan.hashed_files,
+            job = %p.job.id,
+            actions = p.plan.actions.len(),
+            hashed = p.scan.hashed_files,
             "prévia calculada"
         );
         Ok(PlanPreview {
-            job_id: job.id,
-            mode: sync.mode,
-            total_actions: plan.actions.len(),
-            actions: plan
+            job_id: p.job.id,
+            mode: p.sync.mode,
+            total_actions: p.plan.actions.len(),
+            actions: p
+                .plan
                 .actions
                 .iter()
                 .take(MAX_PREVIEW_ACTIONS)
                 .map(ActionView::from)
                 .collect(),
-            stats: plan.stats,
-            verdict,
+            stats: p.plan.stats.clone(),
+            verdict: p.verdict,
             warnings,
-            hashed_files: scan.hashed_files,
-            duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
-            first_run,
+            hashed_files: p.scan.hashed_files,
+            duration_ms: elapsed_ms(started),
+            first_run: p.first_run,
         })
+    }
+
+    /// Executa a sincronização de uma tarefa (RN-36 a RN-46, RN-90 a RN-95).
+    /// `progress` é chamado a cada item; a GUI repassa como evento, a CLI imprime.
+    pub async fn run_job(
+        &self,
+        id: Uuid,
+        options: RunOptions,
+        progress: impl Fn(&Progress) + Send + Sync,
+    ) -> ServiceResult<RunReport> {
+        let started = Instant::now();
+        // RN-90: uma execução por tarefa (vale entre GUI e CLI).
+        let _lock = JobLock::try_acquire(&self.paths.lock_dir, id)?;
+        let cancel = Arc::new(AtomicBool::new(false));
+        let _running = RunningGuard::register(&self.running, id, cancel.clone());
+
+        let p = self.prepare(id).await?;
+        // RN-18
+        if !p.job.enabled {
+            return Err(ServiceError::Invalid("a tarefa está desativada".into()));
+        }
+        let state = self.state()?;
+        match &p.verdict {
+            GuardVerdict::Abort(reasons) => {
+                let run = state.start_run(id, RunKind::Sync, options.trigger)?;
+                state.finish_run(run, RunStatus::Aborted, None, Some(&reasons.join("; ")))?;
+                return Err(ServiceError::Invalid(format!(
+                    "execução bloqueada: {}",
+                    reasons.join("; ")
+                )));
+            }
+            // RN-43: execução agendada nunca confirma sozinha.
+            GuardVerdict::NeedsConfirmation(reasons)
+                if options.trigger == RunTrigger::Scheduled =>
+            {
+                let run = state.start_run(id, RunKind::Sync, options.trigger)?;
+                state.finish_run(
+                    run,
+                    RunStatus::AwaitingConfirmation,
+                    None,
+                    Some(&reasons.join("; ")),
+                )?;
+                return Err(ServiceError::NeedsConfirmation(reasons.clone()));
+            }
+            GuardVerdict::NeedsConfirmation(reasons) if !options.confirm => {
+                return Err(ServiceError::NeedsConfirmation(reasons.clone()));
+            }
+            _ => {}
+        }
+
+        // RN-46: reserva de espaço na conta (o Gmail para de receber e-mails se encher).
+        let needed = p.plan.stats.bytes_to_send;
+        if needed > 0
+            && let Some(free) = p
+                .provider
+                .quota()
+                .await
+                .map_err(CoreError::from)?
+                .and_then(|q| q.free())
+        {
+            let reserve = p.settings.min_free_space_mib.saturating_mul(1024 * 1024);
+            if free < needed.saturating_add(reserve) {
+                let msg = format!(
+                    "espaço insuficiente: a execução precisa de {} e a conta tem {} livres \
+                     (reserva mínima de {})",
+                    human_bytes(needed),
+                    human_bytes(free),
+                    human_bytes(reserve)
+                );
+                let run = state.start_run(id, RunKind::Sync, options.trigger)?;
+                state.finish_run(run, RunStatus::Aborted, None, Some(&msg))?;
+                return Err(ServiceError::Invalid(msg));
+            }
+        }
+
+        let run_id = state.start_run(id, RunKind::Sync, options.trigger)?;
+        let state = Mutex::new(state);
+        tracing::info!(job = %id, actions = p.plan.actions.len(), "execução iniciada");
+        let result = executor::execute(
+            p.provider.as_ref(),
+            &state,
+            &Execution {
+                job_id: id,
+                dest: &p.sync.destination.path,
+                plan: &p.plan,
+                scan: &p.scan,
+                remote: &p.remote.entries,
+                parallelism: usize::from(p.settings.max_parallel_transfers),
+                retry: RetryPolicy {
+                    max_attempts: 2,
+                    base_delay: std::time::Duration::from_secs(1),
+                    max_delay: std::time::Duration::from_secs(4),
+                },
+                cancel: &cancel,
+                progress: &progress,
+            },
+        )
+        .await;
+        let state = state.into_inner().unwrap_or_else(PoisonError::into_inner);
+
+        let report = match result {
+            Ok(report) => report,
+            Err(e) => {
+                state.finish_run(run_id, RunStatus::Failed, None, Some(&e.to_string()))?;
+                return Err(e.into());
+            }
+        };
+        // RN-91
+        let status = if report.aborted.is_some() {
+            RunStatus::Aborted
+        } else if report.cancelled {
+            RunStatus::Cancelled
+        } else if report.failures.is_empty() {
+            RunStatus::Success
+        } else if report.succeeded_items() > 0 {
+            RunStatus::PartialSuccess
+        } else {
+            RunStatus::Failed
+        };
+        let stats = serde_json::to_value(&report).ok();
+        state.finish_run(run_id, status, stats.as_ref(), report.aborted.as_deref())?;
+        tracing::info!(job = %id, status = status.as_str(), "execução concluída");
+        Ok(RunReport::new(status, report, elapsed_ms(started)))
+    }
+
+    /// RN-95: pede para parar; o que já foi confirmado fica no índice.
+    pub fn cancel_run(&self, id: Uuid) -> bool {
+        let running = self.running.lock().unwrap_or_else(PoisonError::into_inner);
+        match running.get(&id) {
+            Some(flag) => {
+                flag.store(true, Ordering::Relaxed);
+                true
+            }
+            None => false,
+        }
     }
 }
 
-/// Fábrica de provedores: o único lugar que conhece todos eles (ARQUITETURA.md §2).
-fn provider_for(account: &Account) -> ServiceResult<Box<dyn StorageProvider>> {
-    match &account.kind {
-        AccountKind::Local { root } => Ok(Box::new(LocalProvider::new(root.clone()))),
-        AccountKind::GoogleDrive { .. } => Err(ServiceError::Unavailable(
-            "o provedor Google Drive chega na fase 1 (ver docs/ARQUITETURA.md)".into(),
-        )),
+impl Service {
+    /// Fábrica de provedores: o único lugar que conhece todos eles (ARQUITETURA.md §2).
+    pub(crate) async fn provider_for(
+        &self,
+        account: &Account,
+    ) -> ServiceResult<Box<dyn StorageProvider>> {
+        match &account.kind {
+            AccountKind::Local { root } => Ok(Box::new(LocalProvider::new(root.clone()))),
+            AccountKind::GoogleDrive { root_folder_id, .. } => {
+                self.google_provider(account, root_folder_id.clone()).await
+            }
+        }
     }
 }
 
@@ -373,7 +620,7 @@ fn clean_patterns(patterns: &[String]) -> Vec<String> {
         .collect()
 }
 
-fn account_summary(config: &AppConfig, account: &Account) -> AccountSummary {
+pub(crate) fn account_summary(config: &AppConfig, account: &Account) -> AccountSummary {
     let detail = match &account.kind {
         AccountKind::GoogleDrive { email, .. } => email.clone().unwrap_or_default(),
         AccountKind::Local { root } => root.display().to_string(),
@@ -434,7 +681,7 @@ mod tests {
 
     fn setup() -> (tempfile::TempDir, Service, PathBuf, PathBuf) {
         let tmp = tempfile::tempdir().unwrap();
-        let service = Service::open(AppPaths::in_dir(&tmp.path().join("app"))).unwrap();
+        let service = crate::test_support::service(&tmp.path().join("app"), "http://127.0.0.1:9");
         let source = tmp.path().join("Docs");
         std::fs::create_dir_all(source.join("sub")).unwrap();
         std::fs::write(source.join("a.txt"), "a").unwrap();
@@ -483,8 +730,103 @@ mod tests {
         assert_eq!(service.list_accounts().unwrap()[0].job_count, 1);
     }
 
-    #[test]
-    fn rn05_remover_conta_desativa_tarefas() {
+    fn job_to_local(service: &Service, source: PathBuf, dest: PathBuf) -> Uuid {
+        let account = service.add_local_account("HD".into(), dest).unwrap();
+        service
+            .save_job(JobDraft {
+                id: None,
+                name: "Docs".into(),
+                enabled: true,
+                sources: vec![source],
+                exclude: vec![],
+                include_sensitive: false,
+                sync: Some(SyncDraft {
+                    account_id: account.id,
+                    path: "Backup".into(),
+                    mode: SyncMode::Upload,
+                }),
+            })
+            .unwrap()
+            .id
+    }
+
+    fn manual(confirm: bool) -> RunOptions {
+        RunOptions {
+            confirm,
+            trigger: RunTrigger::Manual,
+        }
+    }
+
+    #[tokio::test]
+    async fn rn36_execucao_exige_confirmacao_na_primeira_vez() {
+        let (_tmp, service, source, dest) = setup();
+        let id = job_to_local(&service, source, dest.clone());
+
+        let err = service
+            .run_job(id, manual(false), |_| {})
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), "needs_confirmation");
+        assert!(!dest.join("Backup").exists());
+
+        let progress = Mutex::new(Vec::new());
+        let report = service
+            .run_job(id, manual(true), |p| progress.lock().unwrap().push(p.done))
+            .await
+            .unwrap();
+        assert_eq!(report.status, "success");
+        assert_eq!(report.report.uploaded, 2);
+        assert_eq!(
+            std::fs::read_to_string(dest.join("Backup/Docs/a.txt")).unwrap(),
+            "a"
+        );
+        assert!(!progress.lock().unwrap().is_empty());
+
+        // Já houve sucesso: a próxima não pede confirmação e não tem nada a fazer.
+        let report = service.run_job(id, manual(false), |_| {}).await.unwrap();
+        assert_eq!(report.report.uploaded, 0);
+        let last = service.list_jobs().unwrap()[0].last_run.clone().unwrap();
+        assert_eq!(last.status, "success");
+    }
+
+    #[tokio::test]
+    async fn rn43_agendada_nunca_confirma_sozinha() {
+        let (_tmp, service, source, dest) = setup();
+        let id = job_to_local(&service, source, dest.clone());
+        let options = RunOptions {
+            confirm: true,
+            trigger: RunTrigger::Scheduled,
+        };
+        let err = service.run_job(id, options, |_| {}).await.unwrap_err();
+        assert_eq!(err.code(), "needs_confirmation");
+        let last = service.list_jobs().unwrap()[0].last_run.clone().unwrap();
+        assert_eq!(last.status, "awaiting_confirmation");
+        assert!(!dest.join("Backup").exists());
+    }
+
+    #[tokio::test]
+    async fn rn90_tarefa_em_execucao_nao_roda_de_novo() {
+        let (_tmp, service, source, dest) = setup();
+        let id = job_to_local(&service, source, dest);
+        let _held = JobLock::try_acquire(&service.paths.lock_dir, id).unwrap();
+        let err = service.run_job(id, manual(true), |_| {}).await.unwrap_err();
+        assert_eq!(err.code(), "busy");
+        assert!(!service.cancel_run(id));
+    }
+
+    #[tokio::test]
+    async fn rn40_fonte_sumida_bloqueia_e_fica_no_historico() {
+        let (_tmp, service, source, dest) = setup();
+        let id = job_to_local(&service, source.clone(), dest);
+        std::fs::rename(&source, source.with_file_name("Movida")).unwrap();
+        let err = service.run_job(id, manual(true), |_| {}).await.unwrap_err();
+        assert!(err.to_string().contains("bloqueada"), "{err}");
+        let last = service.list_jobs().unwrap()[0].last_run.clone().unwrap();
+        assert_eq!(last.status, "aborted");
+    }
+
+    #[tokio::test]
+    async fn rn05_remover_conta_desativa_tarefas() {
         let (_tmp, service, source, dest) = setup();
         let account = service.add_local_account("HD".into(), dest).unwrap();
         service
@@ -502,7 +844,7 @@ mod tests {
                 }),
             })
             .unwrap();
-        service.remove_account(account.id).unwrap();
+        service.remove_account(account.id).await.unwrap();
         let jobs = service.list_jobs().unwrap();
         assert!(!jobs[0].enabled);
         assert!(service.list_accounts().unwrap().is_empty());

@@ -85,6 +85,22 @@ pub struct ScanResult {
     pub warnings: Vec<ScanWarning>,
     /// Quantos arquivos precisaram de hash (o resto veio do índice).
     pub hashed_files: usize,
+    /// Nome da fonte → caminho real (links resolvidos). O executor lê os arquivos daqui.
+    pub roots: BTreeMap<String, PathBuf>,
+}
+
+impl ScanResult {
+    /// Caminho absoluto de uma chave (`Fonte/a/b.txt` → `/raiz/da/Fonte/a/b.txt`).
+    pub fn local_path(&self, key: &str) -> Option<PathBuf> {
+        let (source, rest) = key.split_once('/').unwrap_or((key, ""));
+        let root = self.roots.get(source)?;
+        Some(if rest.is_empty() {
+            root.clone()
+        } else {
+            rest.split('/')
+                .fold(root.clone(), |acc, part| acc.join(part))
+        })
+    }
 }
 
 /// Pasta a visitar, com os `.syncignore` em vigor (do mais raso ao mais fundo).
@@ -158,6 +174,7 @@ impl Walker<'_> {
         };
         status.exists = true;
         status.readable = true;
+        self.result.roots.insert(name.clone(), root.clone());
 
         // RN-22: a própria fonte também passa pelos filtros (ex.: escolher `~/.ssh`).
         if self.req.filter.is_excluded(Path::new(&name), meta.is_dir()) {

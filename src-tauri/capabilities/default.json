@@ -14,6 +14,12 @@
     "allow-list-jobs",
     "allow-save-job",
     "allow-delete-job",
-    "allow-preview-job"
+    "allow-preview-job",
+    "allow-connect-google",
+    "allow-list-remote",
+    "allow-upload-file",
+    "allow-download-file",
+    "allow-run-job",
+    "allow-cancel-run"
   ]
 }

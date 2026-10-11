@@ -7,9 +7,11 @@
 use std::path::PathBuf;
 
 use serde::Serialize;
-use syncly_service::dto::{AccountSummary, AppInfo, JobDraft, JobSummary, PlanPreview};
-use syncly_service::{Service, ServiceError};
-use tauri::State;
+use syncly_service::dto::{
+    AccountSummary, AppInfo, JobDraft, JobSummary, PlanPreview, RemoteItem, RunReport,
+};
+use syncly_service::{Progress, RunOptions, RunTrigger, Service, ServiceError};
+use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
 
 /// Erro como a UI recebe: código estável + mensagem em português (SEG-33).
@@ -59,7 +61,7 @@ pub async fn add_local_account(
 
 #[tauri::command]
 pub async fn remove_account(service: State<'_, Service>, id: Uuid) -> ApiResult<()> {
-    Ok(service.remove_account(id)?)
+    Ok(service.remove_account(id).await?)
 }
 
 #[tauri::command]
@@ -80,4 +82,85 @@ pub async fn delete_job(service: State<'_, Service>, id: Uuid) -> ApiResult<()> 
 #[tauri::command]
 pub async fn preview_job(service: State<'_, Service>, id: Uuid) -> ApiResult<PlanPreview> {
     Ok(service.preview_job(id).await?)
+}
+
+/// Evento `run-progress`: um por item processado.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RunProgressEvent {
+    job_id: Uuid,
+    #[serde(flatten)]
+    progress: Progress,
+}
+
+/// Executa a sincronização. Sem `confirm`, a primeira execução (e planos com exclusões
+/// em massa) volta com o código `needs_confirmation` para a UI perguntar ao usuário.
+#[tauri::command]
+pub async fn run_job(
+    app: AppHandle,
+    service: State<'_, Service>,
+    id: Uuid,
+    confirm: bool,
+) -> ApiResult<RunReport> {
+    let options = RunOptions {
+        confirm,
+        trigger: RunTrigger::Manual,
+    };
+    let report = service
+        .run_job(id, options, move |p| {
+            let event = RunProgressEvent {
+                job_id: id,
+                progress: p.clone(),
+            };
+            let _ = app.emit("run-progress", event);
+        })
+        .await?;
+    Ok(report)
+}
+
+/// RN-95: pede para parar uma execução em andamento.
+#[tauri::command]
+pub async fn cancel_run(service: State<'_, Service>, id: Uuid) -> ApiResult<bool> {
+    Ok(service.cancel_run(id))
+}
+
+/// Abre o navegador do sistema e espera a autorização (até 5 minutos).
+#[tauri::command]
+pub async fn connect_google(service: State<'_, Service>) -> ApiResult<AccountSummary> {
+    Ok(service.connect_google(|_| {}).await?)
+}
+
+#[tauri::command]
+pub async fn list_remote(
+    service: State<'_, Service>,
+    account_id: Uuid,
+    path: String,
+) -> ApiResult<Vec<RemoteItem>> {
+    Ok(service.list_remote(account_id, &path).await?)
+}
+
+#[tauri::command]
+pub async fn upload_file(
+    service: State<'_, Service>,
+    account_id: Uuid,
+    local_path: PathBuf,
+    remote_dir: String,
+) -> ApiResult<RemoteItem> {
+    Ok(service
+        .upload_file(account_id, &local_path, &remote_dir)
+        .await?)
+}
+
+/// Retorna o caminho onde o arquivo foi salvo.
+#[tauri::command]
+pub async fn download_file(
+    service: State<'_, Service>,
+    account_id: Uuid,
+    remote_path: String,
+    local_dir: PathBuf,
+) -> ApiResult<String> {
+    let saved = service
+        .download_file(account_id, &remote_path, &local_dir)
+        .await?;
+    Ok(saved.display().to_string())
 }

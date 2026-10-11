@@ -34,6 +34,7 @@ const stats = computed(() => {
         <ul>
           <li v-for="r in preview.verdict.reasons" :key="r">{{ r }}</li>
         </ul>
+        <p class="small">Revise o plano abaixo; ao clicar em <strong>Executar</strong>, o app pede a sua confirmação.</p>
       </div>
     </div>
     <div v-else class="banner banner-danger">

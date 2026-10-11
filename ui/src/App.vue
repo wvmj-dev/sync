@@ -10,6 +10,7 @@ const links = [
   { to: "/", label: "Visão geral" },
   { to: "/tarefas", label: "Tarefas" },
   { to: "/contas", label: "Contas" },
+  { to: "/arquivos", label: "Arquivos" },
 ];
 </script>
 

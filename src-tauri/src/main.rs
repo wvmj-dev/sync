@@ -38,6 +38,12 @@ fn main() {
             commands::save_job,
             commands::delete_job,
             commands::preview_job,
+            commands::connect_google,
+            commands::list_remote,
+            commands::upload_file,
+            commands::download_file,
+            commands::run_job,
+            commands::cancel_run,
         ])
         .run(tauri::generate_context!());
 

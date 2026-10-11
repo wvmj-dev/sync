@@ -20,30 +20,45 @@ pub struct RemoteTree {
     pub invalid_names: Vec<String>,
 }
 
+/// Caminha da raiz do app até `path`. Com `create`, cria as pastas que faltarem; sem,
+/// retorna `None` se algo não existir. Nomes duplicados → erro: o app nunca adivinha (RN-34).
+pub async fn resolve_path(
+    provider: &dyn StorageProvider,
+    path: &RelPath,
+    create: bool,
+) -> CoreResult<Option<RemoteEntry>> {
+    let mut current = provider.app_root().await?;
+    for part in path.components() {
+        let children = provider.list_children(&current.id).await?;
+        let found: Vec<_> = children.into_iter().filter(|c| c.name == part).collect();
+        current = match found.as_slice() {
+            [] if create => provider.create_folder(&current.id, part).await?,
+            [] => return Ok(None),
+            [one] if one.kind == EntryKind::Folder => one.clone(),
+            [_] => {
+                return Err(CoreError::Destination(format!(
+                    "'{path}' existe mas '{part}' não é uma pasta"
+                )));
+            }
+            _ => {
+                return Err(CoreError::Destination(format!(
+                    "há mais de um item '{part}' em '{path}' — renomeie no provedor"
+                )));
+            }
+        };
+    }
+    Ok(Some(current))
+}
+
 /// Resolve o destino sem criar nada e lista tudo abaixo dele.
 pub async fn load_remote_tree(
     provider: &dyn StorageProvider,
     dest: &RelPath,
 ) -> CoreResult<RemoteTree> {
-    let mut current = provider.app_root().await?.id;
-    for part in dest.components() {
-        let children = provider.list_children(&current).await?;
-        let found: Vec<_> = children.into_iter().filter(|c| c.name == part).collect();
-        match found.as_slice() {
-            [] => return Ok(RemoteTree::default()),
-            [one] if one.kind == EntryKind::Folder => current = one.id.clone(),
-            [_] => {
-                return Err(CoreError::Destination(format!(
-                    "'{dest}' existe mas '{part}' não é uma pasta"
-                )));
-            }
-            _ => {
-                return Err(CoreError::Destination(format!(
-                    "há mais de uma pasta '{part}' em '{dest}' — renomeie uma delas no provedor"
-                )));
-            }
-        }
-    }
+    let Some(dest_entry) = resolve_path(provider, dest, false).await? else {
+        return Ok(RemoteTree::default());
+    };
+    let current = dest_entry.id;
 
     let mut tree = RemoteTree {
         dest_id: Some(current.clone()),

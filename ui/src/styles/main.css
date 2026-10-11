@@ -505,3 +505,68 @@ details summary {
   cursor: pointer;
   color: var(--muted);
 }
+
+/* ---- Arquivos ---- */
+
+a.btn {
+  display: inline-block;
+  text-decoration: none;
+}
+
+.files-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.files-toolbar select {
+  max-width: 360px;
+}
+
+.crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.15rem;
+  margin-bottom: 0.75rem;
+}
+
+.crumbs .btn,
+.folder-link {
+  padding: 0.15rem 0.4rem;
+}
+
+/* ---- Execução ---- */
+
+.run {
+  margin-top: 1rem;
+  border-top: 1px solid var(--border);
+  padding-top: 1rem;
+}
+
+.progress {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  overflow: hidden;
+  margin: 0.4rem 0;
+}
+
+.progress > div {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.2s ease;
+}
+
+.run-current {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}

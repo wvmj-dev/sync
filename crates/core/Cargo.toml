@@ -10,6 +10,7 @@ publish.workspace = true
 async-trait.workspace = true
 chrono.workspace = true
 directories.workspace = true
+futures-util.workspace = true
 hex.workspace = true
 ignore.workspace = true
 md-5.workspace = true

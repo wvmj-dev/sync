@@ -1,5 +1,6 @@
 // ÚNICO lugar do frontend que fala com o Rust. Componentes usam `api.*`, nunca `invoke`.
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, isTauri } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { ask, open } from "@tauri-apps/plugin-dialog";
 import type {
   AccountSummary,
@@ -8,6 +9,9 @@ import type {
   JobDraft,
   JobSummary,
   PlanPreview,
+  RemoteItem,
+  RunProgress,
+  RunReport,
 } from "./types";
 
 export class ApiError extends Error {
@@ -24,7 +28,12 @@ function isApiErrorPayload(e: unknown): e is { code: ApiErrorCode; message: stri
   return typeof e === "object" && e !== null && "code" in e && "message" in e;
 }
 
+/** Fora da janela do app (ex.: aba do navegador em localhost:1420) não há ponte com o Rust. */
+const OUTSIDE_APP =
+  "Esta tela só funciona dentro da janela do Syncly. Feche esta aba e rode `pnpm tauri dev`.";
+
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  if (!isTauri()) throw new ApiError("unavailable", OUTSIDE_APP);
   try {
     return await invoke<T>(command, args);
   } catch (e) {
@@ -43,6 +52,18 @@ export const api = {
   saveJob: (draft: JobDraft) => call<JobSummary>("save_job", { draft }),
   deleteJob: (id: string) => call<void>("delete_job", { id }),
   previewJob: (id: string) => call<PlanPreview>("preview_job", { id }),
+  /** Sem `confirm`, pode falhar com o código `needs_confirmation` (RN-36, RN-42). */
+  runJob: (id: string, confirm: boolean) => call<RunReport>("run_job", { id, confirm }),
+  cancelRun: (id: string) => call<boolean>("cancel_run", { id }),
+  /** Abre o navegador e espera a autorização (até 5 minutos). */
+  connectGoogle: () => call<AccountSummary>("connect_google"),
+  listRemote: (accountId: string, path: string) =>
+    call<RemoteItem[]>("list_remote", { accountId, path }),
+  uploadFile: (accountId: string, localPath: string, remoteDir: string) =>
+    call<RemoteItem>("upload_file", { accountId, localPath, remoteDir }),
+  /** Retorna o caminho onde o arquivo foi salvo. */
+  downloadFile: (accountId: string, remotePath: string, localDir: string) =>
+    call<string>("download_file", { accountId, remotePath, localDir }),
 };
 
 export async function pickFolder(title: string): Promise<string | null> {
@@ -54,6 +75,12 @@ export async function pickFiles(title: string): Promise<string[]> {
   const picked = await open({ directory: false, multiple: true, title });
   if (Array.isArray(picked)) return picked;
   return picked ? [picked] : [];
+}
+
+/** Progresso das execuções (um evento por item). Retorna a função para parar de ouvir. */
+export function onRunProgress(handler: (p: RunProgress) => void): Promise<UnlistenFn> {
+  if (!isTauri()) return Promise.resolve(() => {});
+  return listen<RunProgress>("run-progress", (event) => handler(event.payload));
 }
 
 /** Confirmação nativa (o `confirm()` do navegador não é garantido em todas as webviews). */

@@ -8,7 +8,7 @@ detalhado fica em [`.agents/`](.agents/README.md) e deve ser lido **sob demanda*
 
 App desktop para sincronizar e fazer backup de pastas com o Google Drive (outros
 provedores depois). Tauri 2 + Rust (núcleo) + Vue 3/TypeScript (UI) + CLI `syncly`.
-Fase atual: **0 — esqueleto** (roadmap em `docs/ARQUITETURA.md` §13).
+Fase atual: **1b concluída** — sincronização funcionando (Drive e pasta local); falta a tela de status (roadmap em `docs/ARQUITETURA.md` §13).
 
 Fonte da verdade — leia antes de mudar comportamento:
 
@@ -20,16 +20,16 @@ Fonte da verdade — leia antes de mudar comportamento:
 
 Não presuma que algo existe só porque está nos docs — os docs descrevem o projeto completo.
 
-| Já funciona (fase 0) | Ainda **não** existe |
+| Já funciona (fases 0, 1a e 1b) | Ainda **não** existe |
 |---|---|
-| Domínio e validações de contas/tarefas | Executor (aplicar o plano) — `syncly run` só avisa |
-| Varredura local com filtros, `.syncignore`, bloqueios e exclusões | Cliente HTTP do Drive, login OAuth, keyring |
+| Domínio e validações; **executor** (`sync/executor.rs`) com progresso, cancelamento e histórico | Paralelizar a listagem remota (hoje uma pasta por vez) |
+| Varredura local com filtros, `.syncignore`, bloqueios e exclusões | Status / última modificação (RN-100 a RN-103) |
 | Planejador, guardas, política de retry, retenção (funções puras) | Backups, compactação, criptografia, restauração |
 | Estado em SQLite, config TOML, trava por tarefa, logs em arquivo | Agendamento (systemd), notificações, bandeja |
-| `LocalProvider` (pasta local como destino) | Changes API, download/bidirecional |
-| **Prévia** de sincronização na CLI e na UI | Testes de frontend |
+| `LocalProvider` e `GDriveProvider` (Drive: OAuth PKCE, keyring, limitador, retry, envio retomável) | Changes API, download/bidirecional |
+| **Prévia** de sincronização (CLI e UI); enviar/listar/baixar arquivos avulsos (`syncly remote`, tela Arquivos) | Testes de frontend |
 
-Próxima fase: **1** — login Google, provedor Drive, executor (ver `docs/ARQUITETURA.md` §13).
+Próxima fase: **1c** — status e última modificação (ver `docs/ARQUITETURA.md` §13).
 
 ## Mapa
 
@@ -55,7 +55,13 @@ cargo fmt --all
 pnpm build                               # vue-tsc estrito + vite
 pnpm tauri dev                           # app com hot reload (abre uma janela)
 cargo run -p syncly-cli -- preview <tarefa>
+cargo run -p syncly-cli -- run <tarefa> [--confirm]     # executa de verdade
+cargo run -p syncly-cli -- google connect               # abre o navegador (conta real!)
+cargo run -p syncly-cli -- remote ls|put|get …          # arquivos avulsos em Syncly/
 ```
+
+Testes do Drive usam `wiremock` (Google simulado) e `secrets::MemoryStore` (nunca o keyring
+real) — veja `crates/service/src/test_support.rs`.
 
 Teste manual da CLI **sem tocar nos dados reais** do usuário (regra 9):
 

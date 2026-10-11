@@ -12,6 +12,9 @@ pub enum ServiceError {
     Unavailable(String),
     #[error("falha interna: {0}")]
     Internal(String),
+    /// RN-36, RN-42: o plano precisa ser revisado e confirmado.
+    #[error("exige confirmação — {}", .0.join("; "))]
+    NeedsConfirmation(Vec<String>),
 }
 
 impl ServiceError {
@@ -24,6 +27,7 @@ impl ServiceError {
             Self::Core(_) | Self::Internal(_) => "internal",
             Self::NotFound(_) => "not_found",
             Self::Unavailable(_) => "unavailable",
+            Self::NeedsConfirmation(_) => "needs_confirmation",
         }
     }
 }

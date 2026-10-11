@@ -59,6 +59,18 @@ export interface JobSummary {
   lastRun: RunSummary | null;
 }
 
+export interface RemoteItem {
+  name: string;
+  /** Relativo à pasta raiz do app (Syncly/). */
+  path: string;
+  kind: "file" | "folder";
+  size: number | null;
+  modifiedAt: string | null;
+  modifiedBy: string | null;
+  /** Google Docs nativos não têm conteúdo para baixar. */
+  downloadable: boolean;
+}
+
 export interface SyncDraft {
   accountId: string;
   path: string;
@@ -122,7 +134,42 @@ export interface PlanPreview {
   firstRun: boolean;
 }
 
+export interface RunProgress {
+  jobId: string;
+  done: number;
+  total: number;
+  bytesDone: number;
+  bytesTotal: number;
+  current: string | null;
+}
+
+export interface RunFailure {
+  path: string;
+  error: string;
+}
+
+export interface RunReport {
+  status: RunStatus;
+  foldersCreated: number;
+  uploaded: number;
+  updated: number;
+  conflicts: number;
+  adopted: number;
+  trashed: number;
+  forgotten: number;
+  bytesSent: number;
+  /** RN-25: mudaram durante o envio; vão de novo na próxima execução. */
+  unstable: number;
+  /** Até 50; o total está em `failureCount`. */
+  failures: RunFailure[];
+  failureCount: number;
+  cancelled: boolean;
+  aborted: string | null;
+  durationMs: number;
+}
+
 export type ApiErrorCode =
+  | "needs_confirmation"
   | "invalid"
   | "busy"
   | "provider"

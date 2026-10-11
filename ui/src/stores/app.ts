@@ -48,5 +48,6 @@ export const useAppStore = defineStore("app", () => {
     deleteJob: (id: string) => mutate(() => api.deleteJob(id)),
     addLocalAccount: (label: string, root: string) => mutate(() => api.addLocalAccount(label, root)),
     removeAccount: (id: string) => mutate(() => api.removeAccount(id)),
+    connectGoogle: () => mutate(() => api.connectGoogle()),
   };
 });

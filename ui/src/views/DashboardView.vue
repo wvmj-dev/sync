@@ -15,7 +15,7 @@ const steps = computed(() => [
   {
     done: store.accounts.length > 0,
     title: "Conta de destino",
-    hint: "Adicione uma pasta local agora; o Google Drive chega na fase 1.",
+    hint: "Conecte o Google Drive ou adicione uma pasta local (HD externo).",
     to: "/contas",
   },
   {

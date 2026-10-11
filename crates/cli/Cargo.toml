@@ -11,6 +11,7 @@ name = "syncly"
 path = "src/main.rs"
 
 [dependencies]
+chrono.workspace = true
 clap.workspace = true
 syncly-core.workspace = true
 syncly-service.workspace = true

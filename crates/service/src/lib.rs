@@ -3,9 +3,17 @@
 
 pub mod dto;
 mod error;
+mod google;
 pub mod logging;
+pub mod secrets;
 mod service;
+#[cfg(test)]
+mod test_support;
+mod transfers;
 
 pub use error::{ServiceError, ServiceResult};
-pub use service::Service;
+pub use google::GoogleBackend;
+pub use service::{RunOptions, Service};
+pub use syncly_core::domain::RunTrigger;
 pub use syncly_core::paths::AppPaths;
+pub use syncly_core::sync::executor::Progress;

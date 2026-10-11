@@ -5,7 +5,8 @@ use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use syncly_core::domain::{Action, PlanStats, RunRecord, SyncMode};
+use syncly_core::domain::{Action, PlanStats, RunRecord, RunStatus, SyncMode};
+use syncly_core::sync::executor::ExecutionReport;
 use syncly_core::sync::guard::GuardVerdict;
 use uuid::Uuid;
 
@@ -127,6 +128,50 @@ pub struct PlanPreview {
     pub hashed_files: usize,
     pub duration_ms: u64,
     pub first_run: bool,
+}
+
+/// Item listado numa conta (arquivo ou pasta dentro de `Syncly/`).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteItem {
+    pub name: String,
+    /// Relativo à pasta raiz do app.
+    pub path: String,
+    /// `"file"` ou `"folder"`.
+    pub kind: &'static str,
+    pub size: Option<u64>,
+    pub modified_at: Option<DateTime<Utc>>,
+    /// RN-101: autor da última modificação, quando o provedor informa.
+    pub modified_by: Option<String>,
+    /// Arquivos sem checksum (ex.: Google Docs nativos) não são baixados.
+    pub downloadable: bool,
+}
+
+/// Resultado de uma execução. Falhas limitadas a `MAX_REPORT_FAILURES` para a UI.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunReport {
+    /// RN-91: `success`, `partial_success`, `failed`, `aborted`, `cancelled`…
+    pub status: &'static str,
+    #[serde(flatten)]
+    pub report: ExecutionReport,
+    pub failure_count: usize,
+    pub duration_ms: u64,
+}
+
+pub const MAX_REPORT_FAILURES: usize = 50;
+
+impl RunReport {
+    pub fn new(status: RunStatus, mut report: ExecutionReport, duration_ms: u64) -> Self {
+        let failure_count = report.failures.len();
+        report.failures.truncate(MAX_REPORT_FAILURES);
+        Self {
+            status: status.as_str(),
+            report,
+            failure_count,
+            duration_ms,
+        }
+    }
 }
 
 pub const MAX_PREVIEW_ACTIONS: usize = 500;

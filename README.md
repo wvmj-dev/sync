@@ -6,8 +6,9 @@ com uma CLI (`syncly`) que também serve aos agendamentos.
 
 ## Status
 
-**Fase 0 — esqueleto funcional.** Já dá para cadastrar contas e tarefas e ver a **prévia**
-do que uma sincronização faria; executar e falar com o Google Drive chega na fase 1.
+**Fase 1b.** Já dá para **sincronizar pastas** com o Google Drive ou com uma pasta local
+(HD externo): cadastrar a tarefa, ver a **prévia**, **executar** com progresso e cancelar.
+Também dá para enviar e baixar arquivos avulsos. Tudo verificado por checksum.
 
 | Funcionalidade | Situação |
 |---|---|
@@ -16,8 +17,10 @@ do que uma sincronização faria; executar e falar com o Google Drive chega na f
 | Prévia da sincronização (enviar, atualizar, conflitos, lixeira) — UI e CLI | ✅ |
 | Proteções: arquivos sensíveis, disco desmontado, exclusão em massa, 1ª execução | ✅ |
 | Logs em arquivo com rotação | ✅ |
-| Executar a sincronização | fase 1 |
-| Google Drive (login e envio) | fase 1 |
+| Conectar o Google Drive (login no navegador, credencial no keyring) | ✅ |
+| Enviar, listar e baixar arquivos avulsos — tela Arquivos e `syncly remote` | ✅ |
+| **Executar a sincronização** (envio/espelho), com progresso, cancelamento e histórico | ✅ |
+| Tela de status / última modificação de cada arquivo | fase 1c |
 | Backup local/remoto, compactação, criptografia, restauração | fase 2 |
 | Agendamento, notificações, ícone na bandeja | fase 3 |
 | Sincronização bidirecional | fase 4 |
@@ -42,8 +45,9 @@ pnpm install
 pnpm tauri dev        # abre o app com hot reload
 ```
 
-Para usar o Google Drive (a partir da fase 1), configure antes o seu projeto no Google
-Cloud: [docs/CONFIGURAR_GOOGLE.md](docs/CONFIGURAR_GOOGLE.md) (~10 minutos).
+Para usar o Google Drive, configure antes o seu projeto no Google Cloud:
+[docs/CONFIGURAR_GOOGLE.md](docs/CONFIGURAR_GOOGLE.md) (~10 minutos). Depois, **Contas →
+Conectar Google Drive**.
 
 ### CLI
 
@@ -52,7 +56,15 @@ cargo run -p syncly-cli -- info                 # onde ficam config, dados e log
 cargo run -p syncly-cli -- accounts
 cargo run -p syncly-cli -- jobs
 cargo run -p syncly-cli -- preview Documentos   # nome ou ID da tarefa
+cargo run -p syncly-cli -- run Documentos --confirm   # executa (1ª vez exige --confirm)
+
+cargo run -p syncly-cli -- google connect        # abre o navegador para autorizar
+cargo run -p syncly-cli -- remote put ~/foto.jpg Testes   # envia para Syncly/Testes/
+cargo run -p syncly-cli -- remote ls Testes
+cargo run -p syncly-cli -- remote get Testes/foto.jpg ~/Downloads
 ```
+
+Com mais de uma conta, escolha com `--account <nome ou e-mail>`.
 
 Para instalar o binário `syncly` no PATH: `cargo install --path crates/cli`.
 

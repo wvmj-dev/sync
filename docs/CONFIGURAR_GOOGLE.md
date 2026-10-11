@@ -73,7 +73,9 @@ mv ~/Downloads/client_secret_*.json ~/.config/syncly/google-client.json
 chmod 600 ~/.config/syncly/google-client.json
 ```
 
-Depois, no app: **Contas → Conectar Google Drive** (fase 1).
+Depois, no app: **Contas → Conectar Google Drive** (ou, no terminal, `syncly google connect`).
+O navegador abre; entre com sua conta e clique em **Permitir**. A pasta `Syncly/` é criada
+no seu Drive e a credencial fica guardada no cofre de senhas do sistema.
 
 ## Boas práticas
 

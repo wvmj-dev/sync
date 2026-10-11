@@ -23,8 +23,9 @@ citam esse identificador. Ao mudar uma regra, atualize este documento no mesmo c
 - **RN-03** — O app só opera dentro da pasta raiz. Caminhos de destino são sempre relativos a ela.
 - **RN-04** — Várias contas podem coexistir; cada uma com seus próprios tokens no keyring.
 - **RN-05** — Desconectar uma conta revoga o token no Google, apaga-o do keyring e **desativa** (não apaga) as tarefas que a usavam.
-- **RN-06** — Se o Google recusar a renovação do token (`invalid_grant`), a conta fica com status **requer reautenticação**; todas as execuções dela são abortadas sem novas tentativas até o usuário reconectar.
+- **RN-06** — Se o Google recusar a renovação do token (`invalid_grant`), a conta fica com status **requer reautenticação**; todas as execuções dela são abortadas sem novas tentativas até o usuário reconectar. Conectar de novo com o **mesmo e-mail** atualiza a conta existente — as tarefas continuam valendo.
 - **RN-07** — Conta local: uma pasta raiz absoluta, existente. O app grava nela um marcador `.syncly-root` e trata a pasta como trata a raiz do Drive (mesmas regras de lixeira e de caminhos). **Sem o marcador, nada é gravado** — protege contra HD desmontado, quando só resta o ponto de montagem vazio.
+- **RN-08** — Se a pasta `Syncly/` registrada numa conta Google for para a lixeira ou sumir, o app **não cria outra silenciosamente**: as operações falham pedindo reconexão. Ao reconectar, ele reencontra a pasta (se tiver sido restaurada) ou cria uma nova.
 
 ## 3. Tarefas
 
@@ -37,6 +38,7 @@ citam esse identificador. Ao mudar uma regra, atualize este documento no mesmo c
 - **RN-16** — Destino de sincronização: conta existente + caminho relativo à pasta raiz, com 1 a 32 componentes, sem `.`/`..`, sem caracteres de controle, até 255 bytes por componente. A pasta de primeiro nível `Backups` é reservada (RN-51).
 - **RN-17** — Duas tarefas não podem ter destinos sobrepostos na mesma conta (iguais ou um dentro do outro) — cada pasta remota tem um único "dono".
 - **RN-18** — Tarefa desativada não roda (nem manual nem agendada) e seus timers são removidos.
+- **RN-19** — Com destino numa conta local, a pasta de destino não pode ficar dentro de uma fonte da tarefa, nem conter uma fonte — senão a cada execução a cópia copiaria a si mesma.
 
 ## 4. Fontes e filtros
 
@@ -45,7 +47,7 @@ citam esse identificador. Ao mudar uma regra, atualize este documento no mesmo c
 - **RN-22** — **Arquivos sensíveis são excluídos por padrão**: `.ssh/`, `.gnupg/`, `.env`, `.env.*`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, `id_rsa*`, `id_ed25519*`, `*.kdbx`, `.netrc`, `.pgpass`. Só são incluídos se a tarefa marcar explicitamente `include_sensitive = true`. Vale também para a **própria fonte**: escolher `~/.ssh` ou um `.env` como fonte exige essa marcação, e um `.syncignore` não consegue reincluir arquivos sensíveis.
 - **RN-23** — Cada pasta pode ter um arquivo `.syncignore` com exclusões adicionais (mesma sintaxe). As exclusões da tarefa têm precedência; entre `.syncignore`, o mais profundo vence (inclusive `!padrão` para reincluir).
 - **RN-24** — Links simbólicos **não são seguidos** nem enviados; são ignorados com aviso. Arquivos especiais (sockets, FIFOs, dispositivos) também.
-- **RN-25** — Um arquivo cujo tamanho ou mtime mudou durante o envio é marcado como **instável** e reenviado na próxima execução.
+- **RN-25** — Um arquivo cujo tamanho ou mtime mudou durante o envio é marcado como **instável** e reenviado na próxima execução. No índice, ele fica marcado para ter o hash recalculado.
 - **RN-26** — O hash (no algoritmo que o provedor informa — MD5 no Drive) só é recalculado quando tamanho ou mtime diferem do índice.
 - **RN-27** — Arquivos e pastas que não puderam ser lidos (permissão, erro de E/S, `.syncignore` inválido) ficam **bloqueados** naquela execução: nada abaixo deles é enviado, atualizado ou posto na lixeira. Um erro de leitura nunca vira "arquivo apagado".
 - **RN-28** — Itens excluídos pelos filtros **nunca vão para a lixeira** do destino, nem no modo Espelho: o app apenas deixa de acompanhá-los (o que já foi enviado permanece lá). Adicionar `node_modules/` às exclusões não apaga nada.
@@ -82,7 +84,7 @@ citam esse identificador. Ao mudar uma regra, atualize este documento no mesmo c
 - **RN-35** — Conflito: a versão remota é **renomeada** para `<nome> (conflito remoto AAAA-MM-DD HH-MM).<ext>` (se o nome já existir: `… 14-30 2).<ext>`, `… 14-30 3).<ext>`…) e a versão local é enviada com o nome original. Nenhuma versão se perde.
 - **RN-36** — A primeira execução de toda tarefa é **sempre** uma prévia com confirmação. Agendamentos só ficam ativos após a primeira execução manual bem-sucedida.
 - **RN-37** — Cada envio é verificado: MD5 calculado durante o upload deve bater com o `md5Checksum` devolvido pelo Drive. Divergência → nova tentativa; persistindo, item falha.
-- **RN-38** — O índice é gravado imediatamente após cada item confirmado. Execução interrompida é retomada sem duplicar nada.
+- **RN-38** — O índice é gravado imediatamente após cada item confirmado. Execução interrompida é retomada sem duplicar nada. Se um envio falhar sem resposta, antes de tentar de novo o app procura o arquivo no destino — ele pode ter chegado — para não criar duplicata.
 - **RN-39** — Ordem de execução: criar pastas → enviar/atualizar/conflitos (em paralelo) → lixeira de arquivos → lixeira de pastas (mais profundas primeiro).
 
 ## 6. Proteções (guardas)
@@ -156,3 +158,11 @@ citam esse identificador. Ao mudar uma regra, atualize este documento no mesmo c
 - **RN-101** — Para cada arquivo ou pasta de uma tarefa: data de modificação local; data de modificação e **autor da última modificação** no destino; data do último sync; situação — `sincronizado`, `alterado localmente`, `alterado no destino`, `pendente`, `conflito`, `ignorado`.
 - **RN-102** — Para pastas, a "última modificação" é a mais recente entre todos os arquivos dentro dela.
 - **RN-103** — A consulta de status usa o índice (instantânea, funciona offline); "Atualizar do destino" busca os dados atuais na nuvem.
+
+## 13. Transferências avulsas
+
+Enviar ou baixar um arquivo específico, fora de uma tarefa (tela **Arquivos** e `syncly remote`).
+
+- **RN-104** — Envio cria as pastas que faltarem dentro de `Syncly/`, mas **nunca sobrescreve nem duplica**: se já existir um item com o mesmo nome na pasta, o envio é recusado.
+- **RN-105** — Os filtros de arquivos sensíveis e temporários (RN-21, RN-22) valem também para o envio avulso.
+- **RN-106** — Download **nunca sobrescreve**: se o nome já existir na pasta local, grava como `nome (2).ext`, `nome (3).ext`… Todo envio e download é verificado por checksum (RN-37) e o download é gravado de forma atômica. Documentos nativos do Google (sem conteúdo binário) não são baixados.

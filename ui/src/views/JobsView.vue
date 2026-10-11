@@ -49,12 +49,12 @@ async function remove(job: JobSummary) {
     Nenhuma tarefa ainda. Crie uma para escolher as pastas e o destino.
   </p>
 
-  <!-- :key inclui o conteúdo para descartar a prévia antiga quando a tarefa muda. -->
   <JobCard
     v-for="job in store.jobs"
-    :key="JSON.stringify(job)"
+    :key="job.id"
     :job="job"
     @edit="editing = job"
     @remove="remove(job)"
+    @changed="store.refresh()"
   />
 </template>
