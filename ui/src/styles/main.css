@@ -570,3 +570,17 @@ a.btn {
   justify-content: space-between;
   align-items: center;
 }
+
+/* Total desconhecido (ex.: descompactar .tar.gz): barra pulsando. */
+.progress > div.indeterminate {
+  animation: pulse 1.2s ease-in-out infinite alternate;
+}
+
+@keyframes pulse {
+  from {
+    opacity: 0.3;
+  }
+  to {
+    opacity: 0.8;
+  }
+}

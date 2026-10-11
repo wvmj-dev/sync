@@ -3,6 +3,9 @@
 Cada regra tem um identificador (`RN-xx`). O código que a implementa e o teste que a cobre
 citam esse identificador. Ao mudar uma regra, atualize este documento no mesmo commit.
 
+Este documento descreve o projeto **completo**. Seções marcadas como *(planejado)* ainda não
+estão implementadas — o estado de cada fase está em [ARQUITETURA.md §13](ARQUITETURA.md#13-roadmap).
+
 ## 1. Glossário
 
 | Termo | Significado |
@@ -23,7 +26,7 @@ citam esse identificador. Ao mudar uma regra, atualize este documento no mesmo c
 - **RN-03** — O app só opera dentro da pasta raiz. Caminhos de destino são sempre relativos a ela.
 - **RN-04** — Várias contas podem coexistir; cada uma com seus próprios tokens no keyring.
 - **RN-05** — Desconectar uma conta revoga o token no Google, apaga-o do keyring e **desativa** (não apaga) as tarefas que a usavam.
-- **RN-06** — Se o Google recusar a renovação do token (`invalid_grant`), a conta fica com status **requer reautenticação**; todas as execuções dela são abortadas sem novas tentativas até o usuário reconectar. Conectar de novo com o **mesmo e-mail** atualiza a conta existente — as tarefas continuam valendo.
+- **RN-06** — Se o Google recusar a renovação do token (`invalid_grant`), a conta fica com status **requer reautenticação**; todas as execuções dela são abortadas sem novas tentativas até o usuário reconectar. Conectar de novo com o **mesmo e-mail** atualiza a conta existente — as tarefas continuam valendo. *(Hoje a operação falha com "reconecte a conta"; guardar esse status na conta é planejado.)*
 - **RN-07** — Conta local: uma pasta raiz absoluta, existente. O app grava nela um marcador `.syncly-root` e trata a pasta como trata a raiz do Drive (mesmas regras de lixeira e de caminhos). **Sem o marcador, nada é gravado** — protege contra HD desmontado, quando só resta o ponto de montagem vazio.
 - **RN-08** — Se a pasta `Syncly/` registrada numa conta Google for para a lixeira ou sumir, o app **não cria outra silenciosamente**: as operações falham pedindo reconexão. Ao reconectar, ele reencontra a pasta (se tiver sido restaurada) ou cria uma nova.
 
@@ -97,7 +100,7 @@ citam esse identificador. Ao mudar uma regra, atualize este documento no mesmo c
 - **RN-45** — Na CLI, planos que exigem confirmação só rodam com `--confirm`.
 - **RN-46** — **Reserva de espaço**: antes de enviar, o app consulta a cota. Se o espaço livre após o envio ficar abaixo de **1 GiB** (configurável), a execução é abortada — conta Google cheia para de receber e-mails no Gmail.
 
-## 7. Backup
+## 7. Backup *(planejado — fase 2b)*
 
 - **RN-50** — Backup = arquivo único `<tarefa>_<AAAAMMDD-HHMMSS>.tar.zst` (+ `.age` se criptografado), contendo as fontes (com os mesmos filtros da tarefa) e um `MANIFEST.json` (caminho, tamanho, mtime, sha256 de cada arquivo).
 - **RN-51** — Destinos: pasta local (absoluta, **fora** das fontes — senão o backup se incluiria) e/ou remoto em `Syncly/Backups/<tarefa>/`. Pelo menos um.
@@ -112,14 +115,25 @@ citam esse identificador. Ao mudar uma regra, atualize este documento no mesmo c
 - **RN-57** — Restauração vai, por padrão, para uma **pasta nova** (`restauracao-<tarefa>-<data>/`). Restaurar por cima exige confirmação, e os arquivos substituídos vão para a lixeira do sistema.
 - **RN-58** — Antes de extrair, o sha256 do arquivo é verificado. Entradas com caminho absoluto, `..`, links para fora do destino ou arquivos especiais são rejeitadas.
 
-## 8. Compactação
+## 8. Compactação e descompactação
 
-- **RN-60** — Ação avulsa "Compactar": entradas (pastas/arquivos) → arquivo `.tar.zst` (padrão) ou `.zip` (compatibilidade).
-- **RN-61** — Nível zstd 1–19 (padrão 3). No `.zip`, arquivos já comprimidos (jpg, png, mp4, zip, gz, 7z…) são armazenados sem recompressão.
-- **RN-62** — O arquivo de saída não pode estar dentro das entradas e **nunca sobrescreve** um existente (recebe sufixo ` (2)`).
-- **RN-63** — Criptografia só para `.tar.zst` (gera `.tar.zst.age`).
+Tela **Compactar** e `syncly archive create|extract`.
 
-## 9. Criptografia
+### Compactar
+
+- **RN-60** — Ação avulsa "Compactar": até 32 pastas/arquivos → `.zip` (padrão na interface; abre em qualquer sistema), `.tar.gz` (padrão no Linux), `.tar.zst` (mais rápido e menor) ou `.tar` (sem compressão). Backups (RN-50) usam `.tar.zst`. Nome padrão: o da única entrada, ou `arquivos`.
+- **RN-61** — Níveis padrão: zstd 3, gzip 6, deflate 6. No `.zip`, arquivos já comprimidos (jpg, png, mp4, zip, gz, 7z…) são armazenados sem recompressão. O bit de execução é preservado.
+- **RN-62** — O arquivo de saída não pode estar dentro das entradas e **nunca sobrescreve** um existente (`nome (2).zip`, `nome (2).tar.gz`…). É escrito num temporário e só ganha o nome final ao terminar — erro ou cancelamento não deixam arquivo pela metade.
+- **RN-63** — Criptografia só para `.tar.zst` (gera `.tar.zst.age`) — fase 2b.
+- **RN-64** — Valem os filtros da sincronização: lixo e temporários (RN-21) ficam de fora; **arquivos sensíveis** (RN-22) só entram se marcados; `.syncignore` é respeitado; links e arquivos especiais não entram; o que não pôde ser lido vira aviso. Se nada sobrar, nada é criado.
+
+### Descompactar
+
+- **RN-65** — O conteúdo vai sempre para uma **pasta nova** em `destino/<nome do arquivo>/` (`(2)`, `(3)`… se já existir) — nunca por cima de arquivos existentes. Se o compactado tiver uma única pasta no topo, o conteúdo dela vai direto para a pasta nova (sem `Mundo/Mundo/`). A extração acontece numa pasta temporária, que só ganha o nome final se tudo der certo.
+- **RN-66** — Arquivos compactados vindos de fora são **entrada não confiável**. Entradas com caminho absoluto, `..`, nomes inválidos, links (simbólicos ou não) e arquivos especiais são **ignoradas** e listadas no resultado. Entradas repetidas não sobrescrevem a primeira. Só o bit de execução é aplicado — setuid/setgid nunca.
+- **RN-67** — Proteção contra "bomba de compressão" e disco cheio: compactar ou descompactar nunca deixa menos de **1 GiB** livre no disco; se fosse deixar, a operação para e nada fica pela metade.
+
+## 9. Criptografia *(planejado — fase 2b)*
 
 - **RN-70** — Opcional, por tarefa, aplicada a backups e compactações. A sincronização envia arquivos como estão (para serem visualizáveis no Drive).
 - **RN-71** — Formato `age` com chave X25519. A chave pública fica no `config.toml`; a privada, no keyring.
@@ -127,7 +141,7 @@ citam esse identificador. Ao mudar uma regra, atualize este documento no mesmo c
 - **RN-73** — Backups automáticos usam só a chave pública; a privada só é lida na restauração.
 - **RN-74** — Cada backup registra a impressão digital da chave usada; trocar a chave não invalida backups antigos.
 
-## 10. Agendamento
+## 10. Agendamento *(planejado — fase 3)*
 
 - **RN-80** — Opções: manual; a cada N horas (N ∈ {1, 2, 3, 4, 6, 8, 12}); diário às HH:MM; semanal (dia + HH:MM); avançado (expressão `OnCalendar` do systemd).
 - **RN-81** — Sincronização e backup de uma tarefa têm agendamentos independentes.
@@ -141,8 +155,8 @@ citam esse identificador. Ao mudar uma regra, atualize este documento no mesmo c
 - **RN-90** — No máximo uma execução por tarefa ao mesmo tempo (trava exclusiva); um disparo concorrente é descartado e registrado.
 - **RN-91** — Status possíveis: `sucesso`, `sucesso_parcial` (alguns itens falharam), `falha`, `abortada` (guarda, espaço, fonte), `aguardando_confirmacao`, `cancelada`, `adiada`.
 - **RN-92** — Estatísticas por execução: itens e bytes enviados/atualizados/na lixeira/ignorados/com falha, duração.
-- **RN-93** — Histórico mantido por 180 dias ou 1000 execuções por tarefa (o que vier primeiro).
-- **RN-94** — Notifica em `falha`, `abortada`, `aguardando_confirmacao` e adiamentos repetidos. Sucesso é silencioso (configurável).
+- **RN-93** — Histórico mantido por 180 dias ou 1000 execuções por tarefa (o que vier primeiro). *(planejado)*
+- **RN-94** — Notifica em `falha`, `abortada`, `aguardando_confirmacao` e adiamentos repetidos. Sucesso é silencioso (configurável). *(planejado — fase 3)*
 - **RN-95** — Cancelar uma execução interrompe as transferências em andamento; o que já foi confirmado permanece no índice (RN-38).
 
 ### Tratamento de erros
@@ -152,7 +166,7 @@ citam esse identificador. Ao mudar uma regra, atualize este documento no mesmo c
 - **RN-98** — Erros que afetam a conta inteira → a execução é **abortada** imediatamente: autenticação (`401`, RN-06), armazenamento cheio (`storageQuotaExceeded`, `activeItemCreationLimitExceeded`), cota diária do projeto (`dailyLimitExceeded`).
 - **RN-99** — Limite de taxa persistente: se **3 itens seguidos** esgotarem as tentativas por `rateLimitExceeded`/`userRateLimitExceeded`/`429`, a execução é abortada como **adiada**. É assim que o limite de **750 GB/dia** de upload do Google se manifesta — o app para em vez de insistir.
 
-## 12. Status e última modificação
+## 12. Status e última modificação *(planejado — fase 1c)*
 
 - **RN-100** — Para cada tarefa: última execução (data, status, estatísticas), próxima execução agendada, total de arquivos e bytes.
 - **RN-101** — Para cada arquivo ou pasta de uma tarefa: data de modificação local; data de modificação e **autor da última modificação** no destino; data do último sync; situação — `sincronizado`, `alterado localmente`, `alterado no destino`, `pendente`, `conflito`, `ignorado`.

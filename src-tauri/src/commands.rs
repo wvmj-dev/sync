@@ -10,7 +10,10 @@ use serde::Serialize;
 use syncly_service::dto::{
     AccountSummary, AppInfo, JobDraft, JobSummary, PlanPreview, RemoteItem, RunReport,
 };
-use syncly_service::{Progress, RunOptions, RunTrigger, Service, ServiceError};
+use syncly_service::{
+    CompressRequest, CompressResult, ExtractResult, Progress, RunOptions, RunTrigger, Service,
+    ServiceError,
+};
 use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
 
@@ -116,6 +119,40 @@ pub async fn run_job(
         })
         .await?;
     Ok(report)
+}
+
+/// Compacta (RN-60 a RN-64). Progresso pelo evento `archive-progress`.
+#[tauri::command]
+pub async fn compress_paths(
+    app: AppHandle,
+    service: State<'_, Service>,
+    request: CompressRequest,
+) -> ApiResult<CompressResult> {
+    Ok(service
+        .compress(request, move |p| {
+            let _ = app.emit("archive-progress", p.clone());
+        })
+        .await?)
+}
+
+/// Descompacta numa pasta nova (RN-65 a RN-67). Progresso pelo evento `archive-progress`.
+#[tauri::command]
+pub async fn extract_archive(
+    app: AppHandle,
+    service: State<'_, Service>,
+    archive: PathBuf,
+    dest_dir: PathBuf,
+) -> ApiResult<ExtractResult> {
+    Ok(service
+        .extract(archive, dest_dir, move |p| {
+            let _ = app.emit("archive-progress", p.clone());
+        })
+        .await?)
+}
+
+#[tauri::command]
+pub async fn cancel_archive(service: State<'_, Service>) -> ApiResult<bool> {
+    Ok(service.cancel_archive())
 }
 
 /// RN-95: pede para parar uma execução em andamento.

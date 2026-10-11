@@ -70,11 +70,11 @@ src-tauri ──► service ──► gdrive ──► core
 
 | Crate | Tipo | Responsabilidade |
 |---|---|---|
-| `crates/core` (`syncly-core`) | lib | Domínio (tarefas, contas, agendamento), validações, filtros, scanner local, planejador, guardas, política de retry, retenção, estado (SQLite), config (TOML), trava por tarefa, `LocalProvider`. |
+| `crates/core` (`syncly-core`) | lib | Domínio (tarefas, contas, agendamento), validações, filtros, varredura local, planejador, guardas, **executor**, política de retry, retenção, **compactar/descompactar**, estado (SQLite), config (TOML), trava por tarefa, `LocalProvider`. |
 | `crates/gdrive` (`syncly-gdrive`) | lib | Provedor Google Drive: OAuth (PKCE + loopback), chamadas REST v3, upload resumable, classificação de erros, escape de queries. |
-| `crates/service` (`syncly-service`) | lib | Casos de uso (listar/salvar tarefas, prévia, executar, backup…), DTOs da interface, fábrica de provedores. |
+| `crates/service` (`syncly-service`) | lib | Casos de uso (contas, tarefas, prévia, execução, login Google, transferências avulsas, compactação), DTOs da interface, fábrica de provedores, cofre de segredos, logs. |
 | `crates/cli` (`syncly-cli`, binário `syncly`) | bin | Interface de linha de comando; é o que os timers do systemd executam. |
-| `src-tauri` (`syncly-desktop`) | bin | App desktop: registra comandos, plugins, bandeja e eventos de progresso. |
+| `src-tauri` (`syncly-desktop`) | bin | App desktop: registra comandos (allowlist), plugins e eventos de progresso. Bandeja na fase 3. |
 | `ui/` | Vue 3 + TS | Telas. Toda chamada ao Rust passa por `ui/src/api/`. |
 
 ## 4. Estrutura de pastas
@@ -91,7 +91,8 @@ src-tauri ──► service ──► gdrive ──► core
 │   ├── core/src/
 │   │   ├── domain/            # tipos e validações (account, job, schedule, rel_path, plan…)
 │   │   ├── sync/              # scanner, remote_tree, planner, guard, executor, retry
-│   │   ├── backup/            # retention (e, nas próximas fases, archive/restore)
+│   │   ├── archive/           # compactar/descompactar zip e tar (gz, zst), com validação de entradas
+│   │   ├── backup/            # retention (e, nas próximas fases, backup/restore)
 │   │   ├── providers/local.rs # LocalProvider
 │   │   ├── provider.rs        # trait StorageProvider + classificação de erros
 │   │   ├── hash.rs            # hash em streaming no algoritmo de cada provedor
@@ -102,7 +103,7 @@ src-tauri ──► service ──► gdrive ──► core
 │   │   ├── lock.rs            # trava exclusiva por tarefa
 │   │   └── paths.rs           # diretórios XDG
 │   ├── gdrive/src/            # auth, oauth, client, provider, endpoints, query, error
-│   ├── service/src/           # Service, dto, google, transfers, secrets, logging
+│   ├── service/src/           # service (tarefas/execução), google, transfers, archive, secrets, dto, logging
 │   └── cli/src/
 ├── src-tauri/
 │   ├── capabilities/default.json  # allowlist de comandos da janela
@@ -113,8 +114,8 @@ src-tauri ──► service ──► gdrive ──► core
     └── src/
         ├── api/               # ÚNICO lugar que chama invoke(); tipado
         ├── stores/            # Pinia
-        ├── views/
-        └── components/
+        ├── views/             # Visão geral, Tarefas, Contas, Arquivos, Compactar
+        └── components/        # JobCard, JobForm, PlanPreview
 ```
 
 ## 5. Onde ficam os dados
@@ -145,16 +146,20 @@ histórico) e pode ser reconstruído (RN-56).
 3. **Escanear local** (`scanner.rs`) — percorre as fontes aplicando filtros e `.syncignore`;
    registra o que foi excluído (RN-28) e o que não pôde ser lido (RN-27); só calcula hash
    de arquivos cujo tamanho/mtime mudou desde o índice; hashing em paralelo.
-4. **Estado remoto** (`remote_tree.rs`) — fase 1: listagem recursiva da pasta destino;
-   fase 4: Changes API incremental (`changes_since`).
+4. **Estado remoto** (`remote_tree.rs`) — hoje: listagem recursiva da pasta destino, uma
+   pasta por vez (paralelizar é pendência); fase 4: Changes API incremental.
 5. **Planejar** (`planner.rs`) — função pura: `(local, índice, remoto, modo) → Plano`.
    **Guardas** (`guard.rs`) — bloqueiam planos perigosos (RN-40 a RN-44).
-6. **Prévia** — obrigatória na 1ª execução e quando a guarda pede confirmação.
-7. **Executar** — pastas primeiro (sequencial), depois transferências em paralelo
-   (limite configurável), cada arquivo verificado por checksum e gravado no índice.
-8. **Registrar** — estatísticas da execução, notificação em caso de falha.
+6. **Confirmação** — na 1ª execução e quando a guarda pede, a execução volta com o código
+   `needs_confirmation`; a UI pergunta ao usuário e a CLI exige `--confirm` (RN-36, RN-45).
+7. **Executar** (`executor.rs`) — reserva de espaço na conta (RN-46); pastas primeiro
+   (sequencial), depois transferências em paralelo (limite configurável), cada arquivo
+   verificado por checksum e gravado no índice; progresso por evento e cancelamento (RN-95).
+8. **Registrar** — status e estatísticas no histórico (RN-91, RN-92). Notificações: fase 3.
 
-## 7. Fluxo de backup
+## 7. Fluxo de backup *(planejado — fase 2b)*
+
+Vai reaproveitar a compactação já existente (`core/src/archive/`, formato `.tar.zst`).
 
 ```
 fontes ─► tar ─► zstd ─► (age) ─► arquivo .partial ─► verificar sha256 ─► renomear
@@ -167,7 +172,7 @@ fontes ─► tar ─► zstd ─► (age) ─► arquivo .partial ─► verifi
 Backup remoto é **um único arquivo compactado** — uma sequência de requisições em vez de
 milhares, o que é mais rápido e muito mais gentil com as cotas da API.
 
-## 8. Agendamento
+## 8. Agendamento *(planejado — fase 3)*
 
 - Cada agendamento vira um par `syncly-<id>-<sync|backup>.service/.timer` em
   `~/.config/systemd/user/`, executando `syncly run <id-da-tarefa>`.
@@ -189,7 +194,9 @@ milhares, o que é mais rápido e muito mais gentil com as cotas da API.
   `dialog:allow-ask` (confirmações nativas) e eventos.
   O navegador do login OAuth é aberto pelo Rust, não pela UI.
 - CSP restritiva (`default-src 'self'`, sem `eval`, sem recursos externos).
-- Progresso de execuções via eventos Tauri (`run://progress`, `run://finished`) — fase 1.
+- Progresso por eventos Tauri: `run-progress` (execução de tarefa, com `jobId`) e
+  `archive-progress` (compactar/descompactar). Ouvidos só em `ui/src/api/`.
+- Operações longas (execução, compactação) podem ser canceladas: `cancel_run`, `cancel_archive`.
 - Erros chegam à UI como `{ code, message }` com mensagem em português, sem detalhes internos.
 
 ## 10. Desempenho
@@ -197,7 +204,7 @@ milhares, o que é mais rápido e muito mais gentil com as cotas da API.
 | Técnica | Ganho |
 |---|---|
 | Hash só de arquivos alterados (tamanho + mtime contra o índice) | Re-sincronizar 100 mil arquivos sem mudança custa só um `stat` por arquivo. |
-| Hashing paralelo (`rayon`) e listagem com o crate `ignore` | Usa todos os núcleos no 1º scan. |
+| Hashing paralelo (`rayon`) | Usa todos os núcleos no 1º scan. |
 | "Adotar" arquivo remoto idêntico (mesmo MD5) | Reinstalar o app ou perder o índice não causa re-upload. |
 | Transferências paralelas (padrão 4, máx. 8) + limitador de taxa | Throughput alto sem estourar cotas. |
 | Upload simples (< 5 MiB) e resumable em blocos de 8 MiB | Menos requisições; arquivos grandes retomam de onde pararam. |
@@ -206,6 +213,8 @@ milhares, o que é mais rápido e muito mais gentil com as cotas da API.
 | SQLite em WAL, escrita em lote por transação | Índice rápido mesmo com GUI e CLI abertos. |
 | Streaming em tudo (upload, hash, tar, zstd, age) | Memória constante, independente do tamanho do arquivo. |
 | zstd nível 3 multithread | Compressão rápida; dados já comprimidos passam quase sem custo. |
+| Compactar sem hash | A compactação reaproveita a varredura, mas pula o cálculo de MD5. |
+| ZIP sem recompressão de jpg/mp4/zip… | Arquivos já comprimidos vão "armazenados", sem gastar CPU. |
 | Changes API (fase 4) | Detectar mudanças remotas sem listar tudo. |
 
 > Pior caso do Drive: muitos arquivos pequenos (≈1 requisição por arquivo). Para pastas com
@@ -223,7 +232,9 @@ milhares, o que é mais rápido e muito mais gentil com as cotas da API.
 - **Migrações**: `config.toml` tem `version`; `state.db` usa `PRAGMA user_version` com
   migrações sequenciais em `state.rs`.
 - **Testes**: funções puras com testes unitários; `LocalProvider` + `tempfile` para testes
-  de ponta a ponta sem rede e sem conta Google.
+  de ponta a ponta sem rede; Drive com API simulada (`wiremock`) e cofre em memória
+  (`secrets::MemoryStore`) — veja `crates/service/src/test_support.rs`. Nenhum teste usa a
+  conta Google real, o keyring real ou o `HOME` real.
 - **Checklist antes de commitar**: `cargo fmt`, `cargo clippy --workspace`, `cargo test --workspace`,
   `pnpm build`.
 - **Adicionar um provedor**: novo crate `crates/<nome>` implementando `StorageProvider`,
@@ -242,12 +253,14 @@ milhares, o que é mais rápido e muito mais gentil com as cotas da API.
 | Escopo `drive.file` | `drive` (acesso total) | Menor privilégio, escopo não sensível (sem verificação), bug não alcança outros arquivos. |
 | Timers do systemd | Daemon próprio em segundo plano | Roda com o app fechado, sobrevive a reboot, zero código de agendador. |
 | TOML (config) + SQLite (estado) | Tudo em JSON / tudo em SQLite | Config legível e portátil; estado transacional e rápido. |
-| `tar.zst` (padrão) + `zip` (opção) | Só zip | zstd é muito mais rápido e compacta melhor; zip para compatibilidade. |
+| Compactação avulsa em ZIP, TAR, TAR.GZ e TAR.ZST; backups em `tar.zst` | Um formato só | ZIP abre em qualquer sistema; TAR.GZ é o padrão do Linux; zstd é o mais rápido e compacto. |
 | `age` para criptografia | GPG; AES "caseiro" | Formato moderno e auditado, streaming, chave pública permite backup automático sem segredo em memória. |
 | `rustls` | OpenSSL | Sem dependência nativa, implementação memory-safe. |
 | `reqwest` 0.13 (HTTP/2, `rustls`) | crate `google-drive3` | Já citado acima; HTTP/2 reaproveita a conexão entre requisições. |
 | `keyring` 4 (Secret Service via `zbus`) | Arquivo cifrado próprio | Cofre do sistema (GNOME Keyring/KWallet), Rust puro, sem libdbus. |
 | `wiremock` nos testes | Testar contra a conta real | Testes do Drive rodam offline, sem credenciais (regra 9 do `AGENTS.md`). |
+| `zip` só com deflate (Rust puro) + `tar`/`flate2`/`zstd` | Bibliotecas com todos os compressores (bzip2, lzma em C) | Menos código nativo; cobre os formatos comuns. Extração sempre manual, nunca `unpack()` das bibliotecas (SEG-26). |
+| `fs4` para espaço livre | Ignorar espaço em disco | RN-67: bomba de compressão e disco cheio. |
 | Varredura própria (`std::fs`) + `ignore::gitignore` só para padrões | Walker do crate `ignore` | Controle total de exclusões, `.syncignore` e erros — necessário para RN-27/RN-28. |
 | pnpm | npm, yarn | Instalação rápida e `node_modules` estrito (sem dependências fantasmas). |
 | Sem exclusão definitiva | — | Proteção contra bugs e erros humanos (lixeira do Drive guarda 30 dias). |
@@ -257,13 +270,18 @@ milhares, o que é mais rápido e muito mais gentil com as cotas da API.
 | Fase | Entrega | Status |
 |---|---|---|
 | 0 | Esqueleto: workspace, domínio, validações, filtros, planejador, guardas, retenção, estado, `LocalProvider`, logs, prévia de sincronização, UI base | ✅ |
-
-> Limitação conhecida da fase 0: o `LocalProvider` calcula o hash de cada arquivo do destino
-> a cada listagem. Para destinos locais grandes, um cache persistente entra na fase 2.
 | 1a | Login Google (PKCE + keyring), provedor Drive, transferências avulsas (enviar/baixar) | ✅ |
 | 1b | Executor, sync manual (modo envio/espelho) com progresso e cancelamento | ✅ |
 | 1c | Status e última modificação (RN-100 a RN-103) | |
-| 2 | Backups local/remoto, compactação, criptografia (age), retenção, restauração | |
+| 2a | Compactar e descompactar (zip, tar, tar.gz, tar.zst) | ✅ |
+| 2b | Backups local/remoto, criptografia (age), retenção, restauração | |
 | 3 | Agendamento (systemd), notificações, bandeja | |
 | 4 | Changes API, download/bidirecional (requer decisão sobre escopo — ver SEG-03) | |
 | 5 | Outros provedores (OneDrive, Dropbox, S3), macOS/Windows | |
+
+Limitações conhecidas:
+
+- O `LocalProvider` calcula o hash de cada arquivo do destino a cada listagem — lento para
+  destinos locais grandes; um cache persistente entra na fase 2b.
+- A listagem do destino remoto é feita uma pasta por vez.
+- Na tela Arquivos ainda não há botão para criar pasta (a CLI `remote put` cria as que faltam).

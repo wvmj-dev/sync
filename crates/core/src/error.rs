@@ -60,6 +60,13 @@ pub enum CoreError {
     #[error("esta tarefa já está em execução")]
     JobLocked,
 
+    #[error("operação cancelada")]
+    Cancelled,
+
+    /// RN-67
+    #[error("espaço em disco insuficiente: {0}")]
+    DiskFull(String),
+
     #[error("não foi possível localizar a pasta pessoal do usuário")]
     NoHomeDir,
 }

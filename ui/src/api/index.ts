@@ -4,6 +4,10 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { ask, open } from "@tauri-apps/plugin-dialog";
 import type {
   AccountSummary,
+  ArchiveProgress,
+  CompressRequest,
+  CompressResult,
+  ExtractResult,
   ApiErrorCode,
   AppInfo,
   JobDraft,
@@ -55,6 +59,10 @@ export const api = {
   /** Sem `confirm`, pode falhar com o código `needs_confirmation` (RN-36, RN-42). */
   runJob: (id: string, confirm: boolean) => call<RunReport>("run_job", { id, confirm }),
   cancelRun: (id: string) => call<boolean>("cancel_run", { id }),
+  compress: (request: CompressRequest) => call<CompressResult>("compress_paths", { request }),
+  extract: (archive: string, destDir: string) =>
+    call<ExtractResult>("extract_archive", { archive, destDir }),
+  cancelArchive: () => call<boolean>("cancel_archive"),
   /** Abre o navegador e espera a autorização (até 5 minutos). */
   connectGoogle: () => call<AccountSummary>("connect_google"),
   listRemote: (accountId: string, path: string) =>
@@ -75,6 +83,24 @@ export async function pickFiles(title: string): Promise<string[]> {
   const picked = await open({ directory: false, multiple: true, title });
   if (Array.isArray(picked)) return picked;
   return picked ? [picked] : [];
+}
+
+/** Progresso de compactação/descompactação. */
+export function onArchiveProgress(handler: (p: ArchiveProgress) => void): Promise<UnlistenFn> {
+  if (!isTauri()) return Promise.resolve(() => {});
+  return listen<ArchiveProgress>("archive-progress", (event) => handler(event.payload));
+}
+
+export async function pickArchive(title: string): Promise<string | null> {
+  const picked = await open({
+    directory: false,
+    multiple: false,
+    title,
+    filters: [
+      { name: "Arquivos compactados", extensions: ["zip", "tar", "gz", "tgz", "zst", "tzst"] },
+    ],
+  });
+  return typeof picked === "string" ? picked : null;
 }
 
 /** Progresso das execuções (um evento por item). Retorna a função para parar de ouvir. */

@@ -12,6 +12,8 @@ pub enum ServiceError {
     Unavailable(String),
     #[error("falha interna: {0}")]
     Internal(String),
+    #[error("{0}")]
+    Busy(&'static str),
     /// RN-36, RN-42: o plano precisa ser revisado e confirmado.
     #[error("exige confirmação — {}", .0.join("; "))]
     NeedsConfirmation(Vec<String>),
@@ -22,7 +24,9 @@ impl ServiceError {
     pub fn code(&self) -> &'static str {
         match self {
             Self::Core(CoreError::Invalid(_)) | Self::Invalid(_) => "invalid",
-            Self::Core(CoreError::JobLocked) => "busy",
+            Self::Core(CoreError::JobLocked) | Self::Busy(_) => "busy",
+            Self::Core(CoreError::Cancelled) => "cancelled",
+            Self::Core(CoreError::DiskFull(_)) => "disk_full",
             Self::Core(CoreError::Provider(_) | CoreError::Destination(_)) => "provider",
             Self::Core(_) | Self::Internal(_) => "internal",
             Self::NotFound(_) => "not_found",

@@ -573,7 +573,7 @@ mod tests {
                 sources: vec![env.src.clone()],
                 filter: Filter::new(&[], false).unwrap(),
                 skip_dirs: vec![],
-                hash_kind: HashKind::Md5,
+                hash_kind: Some(HashKind::Md5),
             },
             &index,
         );

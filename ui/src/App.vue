@@ -11,6 +11,7 @@ const links = [
   { to: "/tarefas", label: "Tarefas" },
   { to: "/contas", label: "Contas" },
   { to: "/arquivos", label: "Arquivos" },
+  { to: "/compactar", label: "Compactar" },
 ];
 </script>
 

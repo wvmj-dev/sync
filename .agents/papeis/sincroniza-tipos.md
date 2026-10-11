@@ -34,7 +34,10 @@ Mudanças em `crates/service/src/dto.rs`, tipos do `core` serializados para a UI
    - `call("<nome>", { … })` em `ui/src/api/index.ts`
 3. **Argumentos** — as chaves passadas em `call()` são os nomes dos parâmetros Rust em
    `camelCase` (ex.: parâmetro `root` → `{ root }`; `draft: JobDraft` → `{ draft }`).
-4. Rode `pnpm build` (checagem de tipos) e `cargo build -p syncly-desktop` (valida as
+4. **Eventos** — o payload emitido em `src-tauri/src/commands.rs` tem de bater com o tipo
+   ouvido em `ui/src/api/index.ts`: `run-progress` (`RunProgressEvent` ↔ `RunProgress`) e
+   `archive-progress` (`ArchiveProgress` ↔ `ArchiveProgress`).
+5. Rode `pnpm build` (checagem de tipos) e `cargo build -p syncly-desktop` (valida as
    permissões).
 
 ## Saída esperada

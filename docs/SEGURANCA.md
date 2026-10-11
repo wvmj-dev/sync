@@ -10,7 +10,8 @@
 | "E se o app apagar algo por engano?" | Não existe exclusão definitiva no código. Tudo vai para a lixeira do Drive (30 dias). Guardas bloqueiam exclusões em massa. O Drive ainda mantém o histórico de versões de cada arquivo. |
 | "E se encher meu armazenamento?" | O app checa a cota antes de enviar e mantém uma reserva mínima (1 GiB). Conta cheia faz o Gmail parar de receber e-mails — o app não deixa chegar lá. |
 | "E se roubarem meu token?" | Tokens ficam no keyring do sistema (cifrado pelo SO), nunca em arquivo nem na interface web do app. Você pode revogar o acesso a qualquer momento em [myaccount.google.com/connections](https://myaccount.google.com/connections). |
-| "O Google vai 'ler' meus backups?" | Backups podem ser criptografados localmente (`age`) antes do envio. O Google armazena só bytes cifrados. |
+| "O Google vai 'ler' meus arquivos?" | Arquivos sincronizados ficam legíveis no Drive — é o que permite abri-los lá. Para dados sensíveis, a criptografia local dos backups (`age`, o Google só guarda bytes cifrados) chega na fase 2b. Arquivos sensíveis (`.env`, chaves, `.ssh`) já ficam de fora por padrão. |
+| "Abrir um `.zip` baixado da internet no Syncly é seguro?" | Sim: ele é tratado como não confiável. Nada é gravado fora da pasta nova de destino, links e permissões perigosas são ignorados, e um arquivo feito para encher o disco ("bomba de compressão") é interrompido antes (SEG-26). |
 
 ## 2. O que protegemos e de quem
 
@@ -56,6 +57,7 @@ chaves de criptografia; integridade dos backups.
 - **SEG-23** — Links simbólicos não são seguidos (RN-24), evitando sair da fonte e loops.
 - **SEG-24** — Filtros de arquivos sensíveis valem também para a própria fonte e não podem ser desfeitos por `.syncignore` (RN-22). O `config.toml` é tratado como entrada não confiável: cada tarefa é revalidada antes de executar (RN-40).
 - **SEG-25** — IDs vindos do Drive só entram em URLs se tiverem apenas letras, números, `-` e `_`; nomes remotos passam por `validate_name` antes de virar caminho local.
+- **SEG-26** — Arquivos compactados (`.zip`, `.tar.*`) são entrada não confiável: o app nunca usa a extração automática das bibliotecas; valida cada entrada (sem caminhos absolutos, `..`, links, arquivos especiais, setuid) e limita o total escrito ao espaço livre menos a reserva (RN-65 a RN-67).
 
 ### Webview (Tauri)
 

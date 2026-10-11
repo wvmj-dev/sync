@@ -7,6 +7,7 @@ use syncly_core::CoreError;
 use syncly_core::domain::rel_path::{join_str, validate_name};
 use syncly_core::domain::{EntryKind, RelPath};
 use syncly_core::filters::Filter;
+use syncly_core::fsutil::unique_file_path;
 use syncly_core::provider::{RemoteEntry, StorageProvider};
 use syncly_core::sync::remote_tree::resolve_path;
 use uuid::Uuid;
@@ -161,7 +162,8 @@ impl Service {
         if entry.kind != EntryKind::File {
             return Err(ServiceError::Invalid(format!("'{name}' é uma pasta")));
         }
-        let dest = unique_path(local_dir, &name);
+        // RN-106
+        let dest = unique_file_path(local_dir, &name);
         provider
             .download(&entry.id, &dest)
             .await
@@ -221,22 +223,6 @@ fn to_item(dir: &str, e: RemoteEntry) -> RemoteItem {
         modified_by: e.modified_by,
         name: e.name,
     }
-}
-
-/// `a.txt` → `a (2).txt`, `a (3).txt`… até achar um nome livre (RN-106).
-fn unique_path(dir: &Path, name: &str) -> PathBuf {
-    let candidate = dir.join(name);
-    if !candidate.exists() {
-        return candidate;
-    }
-    let (stem, ext) = match name.rfind('.') {
-        Some(i) if i > 0 => name.split_at(i),
-        _ => (name, ""),
-    };
-    (2..)
-        .map(|n| dir.join(format!("{stem} ({n}){ext}")))
-        .find(|p| !p.exists())
-        .unwrap_or(candidate)
 }
 
 #[cfg(test)]
@@ -400,22 +386,5 @@ mod tests {
         svc.remove_account(id).await.unwrap();
         assert_eq!(svc.secrets.get(&account_key(id)).unwrap(), None);
         assert!(svc.list_accounts().unwrap().is_empty());
-    }
-
-    #[test]
-    fn rn106_nome_livre_para_download() {
-        let dir = tempfile::tempdir().unwrap();
-        assert_eq!(unique_path(dir.path(), "a.txt"), dir.path().join("a.txt"));
-        std::fs::write(dir.path().join("a.txt"), "x").unwrap();
-        std::fs::write(dir.path().join("a (2).txt"), "x").unwrap();
-        assert_eq!(
-            unique_path(dir.path(), "a.txt"),
-            dir.path().join("a (3).txt")
-        );
-        std::fs::write(dir.path().join(".bashrc"), "x").unwrap();
-        assert_eq!(
-            unique_path(dir.path(), ".bashrc"),
-            dir.path().join(".bashrc (2)")
-        );
     }
 }

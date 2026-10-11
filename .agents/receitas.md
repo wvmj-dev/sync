@@ -13,6 +13,9 @@ Passo a passo das mudanças mais comuns. Siga a ordem: ela evita esquecer uma da
 5. Adicione o nome em `COMMANDS` (`src-tauri/build.rs`).
 6. Libere `allow-<nome-com-hifens>` em `src-tauri/capabilities/default.json`.
 7. **Tipos** em `ui/src/api/types.ts` e função em `ui/src/api/index.ts`.
+   Operação longa? Receba um callback de progresso no serviço, emita um evento em
+   `commands.rs` (ex.: `archive-progress`) e ouça com uma função `onXxxProgress` em
+   `ui/src/api/index.ts`; ofereça cancelamento (`AtomicBool`).
 8. `cargo build -p syncly-desktop` — o build valida as permissões — e `pnpm build`.
 
 ## 2. Nova regra de negócio

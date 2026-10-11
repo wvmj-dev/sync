@@ -4,10 +4,13 @@ use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use syncly_core::sync::guard::GuardVerdict;
 use syncly_service::dto::{PlanPreview, RemoteItem, RunReport, human_bytes};
-use syncly_service::{AppPaths, Progress, RunOptions, RunTrigger, Service, ServiceError, logging};
+use syncly_service::{
+    AppPaths, ArchiveFormat, ArchiveProgress, CompressRequest, Progress, RunOptions, RunTrigger,
+    Service, ServiceError, logging,
+};
 
 #[derive(Parser)]
 #[command(name = "syncly", version, about = "Sincronização e backup de pastas")]
@@ -43,6 +46,11 @@ enum Command {
         #[arg(long, hide = true)]
         scheduled: bool,
     },
+    /// Compactar e descompactar (zip, tar, tar.gz, tar.zst).
+    Archive {
+        #[command(subcommand)]
+        action: ArchiveCommand,
+    },
     /// Conta Google.
     Google {
         #[command(subcommand)]
@@ -56,6 +64,54 @@ enum Command {
         #[arg(long, global = true, value_name = "CONTA")]
         account: Option<String>,
     },
+}
+
+#[derive(Subcommand)]
+enum ArchiveCommand {
+    /// Compacta pastas e/ou arquivos. Nunca sobrescreve: usa "nome (2)" se preciso.
+    Create {
+        #[arg(required = true, value_name = "ENTRADAS")]
+        inputs: Vec<PathBuf>,
+        #[arg(long, value_enum, default_value = "zip")]
+        format: FormatArg,
+        /// Pasta onde o arquivo será criado (padrão: a atual).
+        #[arg(long, default_value = ".", value_name = "PASTA")]
+        out: PathBuf,
+        /// Nome do arquivo, sem extensão.
+        #[arg(long, value_name = "NOME")]
+        name: Option<String>,
+        /// RN-64: inclui `.env`, chaves, `.ssh`… (não recomendado).
+        #[arg(long)]
+        include_sensitive: bool,
+    },
+    /// Descompacta numa pasta nova (.zip, .tar, .tar.gz, .tar.zst).
+    Extract {
+        #[arg(value_name = "ARQUIVO")]
+        archive: PathBuf,
+        #[arg(default_value = ".", value_name = "DESTINO")]
+        dest: PathBuf,
+    },
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum FormatArg {
+    Zip,
+    Tar,
+    #[value(name = "tar.gz")]
+    TarGz,
+    #[value(name = "tar.zst")]
+    TarZst,
+}
+
+impl From<FormatArg> for ArchiveFormat {
+    fn from(f: FormatArg) -> Self {
+        match f {
+            FormatArg::Zip => Self::Zip,
+            FormatArg::Tar => Self::Tar,
+            FormatArg::TarGz => Self::TarGz,
+            FormatArg::TarZst => Self::TarZst,
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -191,6 +247,76 @@ async fn run(cli: Cli) -> Result<ExitCode, syncly_service::ServiceError> {
                 Err(e) => Err(e),
             };
         }
+        Command::Archive { action } => {
+            let interactive = std::io::stderr().is_terminal();
+            let show = move |p: &ArchiveProgress| {
+                if interactive {
+                    print_archive_progress(p);
+                }
+            };
+            match action {
+                ArchiveCommand::Create {
+                    inputs,
+                    format,
+                    out,
+                    name,
+                    include_sensitive,
+                } => {
+                    let inputs = inputs
+                        .iter()
+                        .map(|i| absolute(i))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let request = CompressRequest {
+                        inputs,
+                        output_dir: absolute(&out)?,
+                        name,
+                        format: format.into(),
+                        include_sensitive,
+                    };
+                    let result = service.compress(request, show).await;
+                    if interactive {
+                        eprintln!();
+                    }
+                    let r = result?;
+                    println!(
+                        "Criado: {}\n  {} arquivo(s), {} pasta(s): {} → {} em {:.1} s",
+                        r.path,
+                        r.files,
+                        r.folders,
+                        human_bytes(r.bytes_in),
+                        human_bytes(r.bytes_out),
+                        r.duration_ms as f64 / 1000.0
+                    );
+                    r.warnings.iter().for_each(|w| println!("  aviso: {w}"));
+                }
+                ArchiveCommand::Extract { archive, dest } => {
+                    let result = service
+                        .extract(absolute(&archive)?, absolute(&dest)?, show)
+                        .await;
+                    if interactive {
+                        eprintln!();
+                    }
+                    let r = result?;
+                    println!(
+                        "Extraído em: {}\n  {} arquivo(s), {} pasta(s), {} em {:.1} s",
+                        r.dest,
+                        r.files,
+                        r.folders,
+                        human_bytes(r.bytes),
+                        r.duration_ms as f64 / 1000.0
+                    );
+                    if r.skipped_count > 0 {
+                        println!(
+                            "  {} entrada(s) ignorada(s) por segurança:",
+                            r.skipped_count
+                        );
+                        for s in &r.skipped {
+                            println!("    {}: {}", s.name, s.reason);
+                        }
+                    }
+                }
+            }
+        }
         Command::Google {
             action: GoogleCommand::Connect,
         } => {
@@ -246,6 +372,29 @@ fn print_progress(p: &Progress) {
         p.total,
         human_bytes(p.bytes_done),
         human_bytes(p.bytes_total)
+    );
+    let _ = std::io::stderr().flush();
+}
+
+fn print_archive_progress(p: &ArchiveProgress) {
+    let total = if p.bytes_total > 0 {
+        format!(" de {}", human_bytes(p.bytes_total))
+    } else {
+        String::new()
+    };
+    let current = p.current.as_deref().unwrap_or("");
+    let current: String = current
+        .chars()
+        .rev()
+        .take(50)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    eprint!(
+        "\r\x1b[2K[{} arquivo(s)] {}{total}  {current}",
+        p.files_done,
+        human_bytes(p.bytes_done)
     );
     let _ = std::io::stderr().flush();
 }

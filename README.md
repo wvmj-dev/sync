@@ -2,26 +2,26 @@
 
 Sincronização e backup de pastas e arquivos com o Google Drive — seguro por padrão,
 rápido e preparado para outros provedores. App desktop em **Tauri 2 + Rust + Vue 3**,
-com uma CLI (`syncly`) que também serve aos agendamentos.
+com uma CLI (`syncly`) que também servirá aos agendamentos.
 
 ## Status
 
-**Fase 1b.** Já dá para **sincronizar pastas** com o Google Drive ou com uma pasta local
-(HD externo): cadastrar a tarefa, ver a **prévia**, **executar** com progresso e cancelar.
-Também dá para enviar e baixar arquivos avulsos. Tudo verificado por checksum.
+Já dá para **sincronizar pastas** com o Google Drive ou com uma pasta local (HD externo) —
+com prévia, execução, progresso e cancelamento —, **enviar e baixar arquivos avulsos** e
+**compactar/descompactar** em ZIP e TAR. Tudo verificado por checksum.
 
 | Funcionalidade | Situação |
 |---|---|
-| Contas locais (HD externo, NAS montado) | ✅ |
+| Contas: Google Drive (login no navegador, credencial no keyring) e pastas locais | ✅ |
 | Tarefas: várias pastas/arquivos, destino, modo envio/espelho, exclusões | ✅ |
-| Prévia da sincronização (enviar, atualizar, conflitos, lixeira) — UI e CLI | ✅ |
-| Proteções: arquivos sensíveis, disco desmontado, exclusão em massa, 1ª execução | ✅ |
+| Prévia da sincronização (enviar, atualizar, conflitos, lixeira) | ✅ |
+| **Executar a sincronização**, com progresso, cancelamento e histórico | ✅ |
+| Proteções: arquivos sensíveis, disco desmontado, exclusão em massa, 1ª execução, espaço na conta | ✅ |
+| Enviar, listar e baixar arquivos avulsos | ✅ |
+| **Compactar e descompactar** (zip, tar, tar.gz, tar.zst), protegido contra arquivos maliciosos | ✅ |
 | Logs em arquivo com rotação | ✅ |
-| Conectar o Google Drive (login no navegador, credencial no keyring) | ✅ |
-| Enviar, listar e baixar arquivos avulsos — tela Arquivos e `syncly remote` | ✅ |
-| **Executar a sincronização** (envio/espelho), com progresso, cancelamento e histórico | ✅ |
 | Tela de status / última modificação de cada arquivo | fase 1c |
-| Backup local/remoto, compactação, criptografia, restauração | fase 2 |
+| Backup local/remoto agendado, criptografia, restauração | fase 2b |
 | Agendamento, notificações, ícone na bandeja | fase 3 |
 | Sincronização bidirecional | fase 4 |
 | Outros provedores; macOS e Windows | fase 5 |
@@ -32,6 +32,7 @@ Também dá para enviar e baixar arquivos avulsos. Tudo verificado por checksum.
 - **Nunca apaga nada de vez**: remoções vão para a lixeira, com proteção contra exclusão em massa.
 - **Arquivos sensíveis** (`.ssh`, `.env`, chaves…) ficam de fora por padrão.
 - Sua senha nunca passa pelo app; tokens ficam no **keyring do sistema**.
+- Arquivos compactados de terceiros são tratados como **não confiáveis** ao descompactar.
 
 Detalhes em [docs/SEGURANCA.md](docs/SEGURANCA.md).
 
@@ -42,31 +43,60 @@ Requisitos (Fedora): Rust ≥ 1.89, Node 20.19+ ou 22.12+, pnpm (`corepack enabl
 
 ```bash
 pnpm install
-pnpm tauri dev        # abre o app com hot reload
+pnpm tauri dev        # abre a janela do app (não use `pnpm dev`: é só o frontend, sem o Rust)
 ```
 
 Para usar o Google Drive, configure antes o seu projeto no Google Cloud:
-[docs/CONFIGURAR_GOOGLE.md](docs/CONFIGURAR_GOOGLE.md) (~10 minutos). Depois, **Contas →
-Conectar Google Drive**.
+[docs/CONFIGURAR_GOOGLE.md](docs/CONFIGURAR_GOOGLE.md) (~10 minutos).
+
+## Como usar
+
+| Tela | Para quê |
+|---|---|
+| **Visão geral** | Primeiros passos, tarefas e última execução, onde ficam config, dados e logs. |
+| **Contas** | **Conectar Google Drive** (abre o navegador; clique em *Continuar* no aviso "O Google não verificou este app" — é o seu próprio app) e adicionar **pastas locais** (HD externo, NAS). |
+| **Tarefas** | Criar uma tarefa (fontes + destino + modo), **Pré-visualizar** e **Executar**. Na primeira execução o app pede confirmação. |
+| **Arquivos** | Navegar na pasta `Syncly/` de uma conta, **enviar** e **baixar** arquivos avulsos. |
+| **Compactar** | Compactar pastas/arquivos em ZIP, TAR.GZ, TAR.ZST ou TAR, e descompactar numa pasta nova. |
+
+Modos de uma tarefa:
+
+- **Envio** (recomendado) — manda o que é novo ou mudou; nunca apaga nada no destino.
+- **Espelho** — o que você apagar no computador vai para a **lixeira** do destino
+  (recuperável por 30 dias no Drive), com proteção contra exclusões em massa.
+
+Dicas:
+
+- Feche programas que escrevem nos arquivos da tarefa (ex.: um jogo com o mundo aberto).
+  Não corrompe nada, mas o que mudar durante o envio é reenviado na próxima execução.
+- Da segunda execução em diante, só vai o que mudou.
+- Enquanto o app estiver em "Testando" no Google Cloud, o login vale por 7 dias; depois,
+  **Contas → Reconectar**.
+- Nada some sem querer: o app nunca sobrescreve nem apaga definitivamente — envio que já
+  existe é recusado, download e compactação usam `nome (2)`.
 
 ### CLI
 
 ```bash
-cargo run -p syncly-cli -- info                 # onde ficam config, dados e logs
+cargo run -p syncly-cli -- info                       # onde ficam config, dados e logs
 cargo run -p syncly-cli -- accounts
 cargo run -p syncly-cli -- jobs
-cargo run -p syncly-cli -- preview Documentos   # nome ou ID da tarefa
+cargo run -p syncly-cli -- preview Documentos         # nome ou ID da tarefa
 cargo run -p syncly-cli -- run Documentos --confirm   # executa (1ª vez exige --confirm)
 
-cargo run -p syncly-cli -- google connect        # abre o navegador para autorizar
-cargo run -p syncly-cli -- remote put ~/foto.jpg Testes   # envia para Syncly/Testes/
+cargo run -p syncly-cli -- google connect             # abre o navegador para autorizar
+cargo run -p syncly-cli -- remote put ~/foto.jpg Testes          # envia para Syncly/Testes/
 cargo run -p syncly-cli -- remote ls Testes
 cargo run -p syncly-cli -- remote get Testes/foto.jpg ~/Downloads
+
+cargo run -p syncly-cli -- archive create ~/Fotos --format zip --out ~/Downloads
+cargo run -p syncly-cli -- archive create ~/projeto ~/notas.md --format tar.gz --name backup
+cargo run -p syncly-cli -- archive extract ~/Downloads/Fotos.zip ~/Desktop
 ```
 
-Com mais de uma conta, escolha com `--account <nome ou e-mail>`.
-
-Para instalar o binário `syncly` no PATH: `cargo install --path crates/cli`.
+Com mais de uma conta, escolha com `--account <nome ou e-mail>`. Para instalar o binário
+`syncly` no PATH: `cargo install --path crates/cli`. Códigos de saída do `run`: 0 sucesso,
+1 falha, 2 exige confirmação, 3 sucesso parcial.
 
 ### Onde ficam os dados
 
@@ -78,6 +108,8 @@ Para instalar o binário `syncly` no PATH: `cargo install --path crates/cli`.
 | Logs (14 dias; `SYNCLY_LOG=debug` para mais detalhes) | `~/.local/state/syncly/logs/` |
 | Tokens e chaves | keyring do sistema (GNOME Keyring/KWallet) |
 
+Nada disso fica no repositório — credenciais e dados pessoais nunca vão para o git.
+
 ## Desenvolvimento
 
 Antes de commitar:
@@ -86,6 +118,9 @@ Antes de commitar:
 cargo fmt --all && cargo clippy --workspace --all-targets && cargo test --workspace
 pnpm build
 ```
+
+Os testes nunca usam a conta Google real, o keyring real nem o seu `HOME`: o Drive é
+simulado (`wiremock`) e o cofre roda em memória.
 
 Pacotes de distribuição (`.rpm`, `.deb`, AppImage em `target/release/bundle/`):
 
@@ -96,9 +131,9 @@ pnpm tauri build
 ### Estrutura
 
 ```
-crates/core      domínio, regras e motor (sem Tauri, sem Google)
-crates/gdrive    provedor Google Drive
-crates/service   casos de uso compartilhados por GUI e CLI, logs
+crates/core      domínio, regras, motor de sincronização e compactação (sem Tauri, sem Google)
+crates/gdrive    provedor Google Drive (OAuth, API REST, envio retomável)
+crates/service   casos de uso compartilhados por GUI e CLI, cofre de segredos, logs
 crates/cli       binário `syncly`
 src-tauri        app desktop (comandos com allowlist)
 ui/              frontend Vue 3 + TypeScript

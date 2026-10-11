@@ -20,6 +20,9 @@
     "allow-upload-file",
     "allow-download-file",
     "allow-run-job",
-    "allow-cancel-run"
+    "allow-cancel-run",
+    "allow-compress-paths",
+    "allow-extract-archive",
+    "allow-cancel-archive"
   ]
 }

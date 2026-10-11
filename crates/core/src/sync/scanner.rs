@@ -29,7 +29,8 @@ pub struct ScanRequest {
     pub filter: Filter,
     /// Pastas do app, puladas mesmo se estiverem dentro de uma fonte (RN-12).
     pub skip_dirs: Vec<PathBuf>,
-    pub hash_kind: HashKind,
+    /// `None` = não calcula hash (ex.: compactação, que não precisa comparar nada).
+    pub hash_kind: Option<HashKind>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -332,7 +333,7 @@ impl Walker<'_> {
                 .then(|| i.local_hash.clone())
                 .flatten()
         });
-        if cached.is_none() {
+        if cached.is_none() && self.req.hash_kind.is_some() {
             self.pending.push((key.clone(), abs.to_path_buf()));
         }
         self.result.entries.insert(
@@ -350,7 +351,9 @@ impl Walker<'_> {
     fn hash_pending(&mut self) {
         let pending = std::mem::take(&mut self.pending);
         self.result.hashed_files = pending.len();
-        let kind = self.req.hash_kind;
+        let Some(kind) = self.req.hash_kind else {
+            return;
+        };
         let hashed: Vec<_> = pending
             .into_par_iter()
             .map(|(key, abs)| {
@@ -422,7 +425,7 @@ mod tests {
             sources,
             filter: Filter::new(&exclude, false).unwrap(),
             skip_dirs: skip,
-            hash_kind: HashKind::Md5,
+            hash_kind: Some(HashKind::Md5),
         }
     }
 

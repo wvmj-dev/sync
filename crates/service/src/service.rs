@@ -44,6 +44,8 @@ pub struct Service {
     pub(crate) http: OnceLock<HttpClient>,
     /// Execuções em andamento neste processo → sinal de cancelamento.
     running: Mutex<HashMap<Uuid, Arc<AtomicBool>>>,
+    /// Compactação/descompactação em andamento (uma por vez).
+    pub(crate) archive_op: Mutex<Option<Arc<AtomicBool>>>,
 }
 
 /// Resultado da preparação de uma execução.
@@ -118,6 +120,7 @@ impl Service {
             google,
             http: OnceLock::new(),
             running: Mutex::new(HashMap::new()),
+            archive_op: Mutex::new(None),
         })
     }
 
@@ -371,7 +374,7 @@ impl Service {
             filter: Filter::new(&job.exclude, job.include_sensitive)
                 .map_err(ServiceError::Invalid)?,
             skip_dirs: self.paths.app_dirs(),
-            hash_kind: provider.hash_kind(),
+            hash_kind: Some(provider.hash_kind()),
         };
         let scan_index = index.clone();
         let scan = tokio::task::spawn_blocking(move || scanner::scan(&request, &scan_index))

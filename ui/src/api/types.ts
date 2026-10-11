@@ -168,7 +168,56 @@ export interface RunReport {
   durationMs: number;
 }
 
+export type ArchiveFormat = "zip" | "tar" | "tar_gz" | "tar_zst";
+
+export interface ArchiveProgress {
+  filesDone: number;
+  filesTotal: number;
+  bytesDone: number;
+  /** 0 = desconhecido (descompactar .tar.*). */
+  bytesTotal: number;
+  current: string | null;
+}
+
+export interface CompressRequest {
+  inputs: string[];
+  outputDir: string;
+  /** Sem extensão; vazio = nome da entrada. */
+  name: string | null;
+  format: ArchiveFormat;
+  includeSensitive: boolean;
+}
+
+export interface CompressResult {
+  path: string;
+  format: ArchiveFormat;
+  files: number;
+  folders: number;
+  bytesIn: number;
+  bytesOut: number;
+  warnings: string[];
+  durationMs: number;
+}
+
+export interface SkippedEntry {
+  name: string;
+  reason: string;
+}
+
+export interface ExtractResult {
+  dest: string;
+  files: number;
+  folders: number;
+  bytes: number;
+  /** RN-66: ignoradas por segurança (até 50; total em `skippedCount`). */
+  skipped: SkippedEntry[];
+  skippedCount: number;
+  durationMs: number;
+}
+
 export type ApiErrorCode =
+  | "cancelled"
+  | "disk_full"
   | "needs_confirmation"
   | "invalid"
   | "busy"

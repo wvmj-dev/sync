@@ -8,7 +8,8 @@ detalhado fica em [`.agents/`](.agents/README.md) e deve ser lido **sob demanda*
 
 App desktop para sincronizar e fazer backup de pastas com o Google Drive (outros
 provedores depois). Tauri 2 + Rust (núcleo) + Vue 3/TypeScript (UI) + CLI `syncly`.
-Fase atual: **1b concluída** — sincronização funcionando (Drive e pasta local); falta a tela de status (roadmap em `docs/ARQUITETURA.md` §13).
+Fases concluídas: **0, 1a, 1b e 2a** — sincronização (Drive e pasta local), transferências avulsas e
+compactação funcionando. Próximas: **1c** (status) e **2b** (backups). Roadmap em `docs/ARQUITETURA.md` §13.
 
 Fonte da verdade — leia antes de mudar comportamento:
 
@@ -24,12 +25,13 @@ Não presuma que algo existe só porque está nos docs — os docs descrevem o p
 |---|---|
 | Domínio e validações; **executor** (`sync/executor.rs`) com progresso, cancelamento e histórico | Paralelizar a listagem remota (hoje uma pasta por vez) |
 | Varredura local com filtros, `.syncignore`, bloqueios e exclusões | Status / última modificação (RN-100 a RN-103) |
-| Planejador, guardas, política de retry, retenção (funções puras) | Backups, compactação, criptografia, restauração |
+| Planejador, guardas, política de retry, retenção (funções puras) | Backups, criptografia, restauração |
 | Estado em SQLite, config TOML, trava por tarefa, logs em arquivo | Agendamento (systemd), notificações, bandeja |
 | `LocalProvider` e `GDriveProvider` (Drive: OAuth PKCE, keyring, limitador, retry, envio retomável) | Changes API, download/bidirecional |
 | **Prévia** de sincronização (CLI e UI); enviar/listar/baixar arquivos avulsos (`syncly remote`, tela Arquivos) | Testes de frontend |
+| Compactar/descompactar zip e tar (`core/src/archive/`, `syncly archive`, tela Compactar) | |
 
-Próxima fase: **1c** — status e última modificação (ver `docs/ARQUITETURA.md` §13).
+`docs/REGRAS_DE_NEGOCIO.md` marca como *(planejado)* as seções e regras que ainda não existem.
 
 ## Mapa
 
@@ -58,6 +60,7 @@ cargo run -p syncly-cli -- preview <tarefa>
 cargo run -p syncly-cli -- run <tarefa> [--confirm]     # executa de verdade
 cargo run -p syncly-cli -- google connect               # abre o navegador (conta real!)
 cargo run -p syncly-cli -- remote ls|put|get …          # arquivos avulsos em Syncly/
+cargo run -p syncly-cli -- archive create|extract …     # zip, tar, tar.gz, tar.zst
 ```
 
 Testes do Drive usam `wiremock` (Google simulado) e `secrets::MemoryStore` (nunca o keyring

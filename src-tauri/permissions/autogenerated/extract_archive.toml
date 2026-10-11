@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-extract-archive"
+description = "Enables the extract_archive command without any pre-configured scope."
+commands.allow = ["extract_archive"]
+
+[[permission]]
+identifier = "deny-extract-archive"
+description = "Denies the extract_archive command without any pre-configured scope."
+commands.deny = ["extract_archive"]

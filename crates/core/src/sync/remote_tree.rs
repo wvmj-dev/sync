@@ -64,7 +64,7 @@ pub async fn load_remote_tree(
         dest_id: Some(current.clone()),
         ..RemoteTree::default()
     };
-    // Sequencial por enquanto; paralelizar com limite quando o provedor Drive existir.
+    // Uma pasta por vez (pendência: paralelizar com limite — ver ARQUITETURA.md §13).
     let mut queue = VecDeque::from([(String::new(), current)]);
     while let Some((prefix, folder_id)) = queue.pop_front() {
         let children = provider.list_children(&folder_id).await?;

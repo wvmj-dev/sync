@@ -5,6 +5,7 @@
 //! Regras citadas como `RN-xx`/`SEG-xx` estão em `docs/REGRAS_DE_NEGOCIO.md`
 //! e `docs/SEGURANCA.md`.
 
+pub mod archive;
 pub mod backup;
 pub mod config;
 pub mod domain;

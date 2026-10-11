@@ -65,9 +65,56 @@ pub fn write_atomic(path: &Path, contents: &[u8]) -> CoreResult<()> {
     result.at(path)
 }
 
+/// `dir/stem.ext` ou, se existir, `dir/stem (2).ext`, `(3)`… — nunca devolve um caminho
+/// existente (RN-62, RN-106). `ext` sem ponto; vazio para pastas ou arquivos sem extensão.
+pub fn unique_path(dir: &Path, stem: &str, ext: &str) -> std::path::PathBuf {
+    let name = |suffix: &str| {
+        if ext.is_empty() {
+            format!("{stem}{suffix}")
+        } else {
+            format!("{stem}{suffix}.{ext}")
+        }
+    };
+    let first = dir.join(name(""));
+    if !first.exists() {
+        return first;
+    }
+    (2..)
+        .map(|n| dir.join(name(&format!(" ({n})"))))
+        .find(|p| !p.exists())
+        .unwrap_or(first)
+}
+
+/// Igual a [`unique_path`], separando a extensão pelo último ponto (`.bashrc` não tem).
+pub fn unique_file_path(dir: &Path, name: &str) -> std::path::PathBuf {
+    match name.rfind('.') {
+        Some(i) if i > 0 => unique_path(dir, &name[..i], &name[i + 1..]),
+        _ => unique_path(dir, name, ""),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rn62_rn106_nome_livre() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        assert_eq!(unique_file_path(d, "a.txt"), d.join("a.txt"));
+        fs::write(d.join("a.txt"), "x").unwrap();
+        fs::write(d.join("a (2).txt"), "x").unwrap();
+        assert_eq!(unique_file_path(d, "a.txt"), d.join("a (3).txt"));
+        fs::write(d.join(".bashrc"), "x").unwrap();
+        assert_eq!(unique_file_path(d, ".bashrc"), d.join(".bashrc (2)"));
+        fs::write(d.join("mundo.tar.gz"), "x").unwrap();
+        assert_eq!(
+            unique_path(d, "mundo", "tar.gz"),
+            d.join("mundo (2).tar.gz")
+        );
+        fs::create_dir(d.join("pasta")).unwrap();
+        assert_eq!(unique_path(d, "pasta", ""), d.join("pasta (2)"));
+    }
 
     #[test]
     fn escrita_atomica_substitui_conteudo() {

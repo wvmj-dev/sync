@@ -15,6 +15,9 @@ const COMMANDS: &[&str] = &[
     "download_file",
     "run_job",
     "cancel_run",
+    "compress_paths",
+    "extract_archive",
+    "cancel_archive",
 ];
 
 fn main() {
