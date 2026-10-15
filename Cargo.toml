@@ -5,8 +5,8 @@ members = ["crates/core", "crates/gdrive", "crates/service", "crates/cli", "src-
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-# 1.89: File::lock/try_lock estáveis (lock.rs)
-rust-version = "1.89"
+# 1.90: exigido pelo Tauri 2.12 (e File::lock/try_lock, desde 1.89, em lock.rs)
+rust-version = "1.90"
 publish = false
 
 [workspace.dependencies]
