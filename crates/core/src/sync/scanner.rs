@@ -551,6 +551,8 @@ mod tests {
                 remote_id: "r".into(),
                 remote_hash: Some("do-indice".into()),
                 synced_at: Utc::now(),
+                remote_modified_at: None,
+                remote_modified_by: None,
             },
         );
         let result = scan(&request(vec![src], &[], vec![]), &index);

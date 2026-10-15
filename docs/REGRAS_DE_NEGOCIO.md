@@ -188,12 +188,14 @@ Cada tarefa agendada vira um timer do systemd do usuário, que roda mesmo com o 
 - **RN-98** — Erros que afetam a conta inteira → a execução é **abortada** imediatamente: autenticação (`401`, RN-06), armazenamento cheio (`storageQuotaExceeded`, `activeItemCreationLimitExceeded`), cota diária do projeto (`dailyLimitExceeded`).
 - **RN-99** — Limite de taxa persistente: se **3 itens seguidos** esgotarem as tentativas por `rateLimitExceeded`/`userRateLimitExceeded`/`429`, a execução é abortada como **adiada**. É assim que o limite de **750 GB/dia** de upload do Google se manifesta — o app para em vez de insistir.
 
-## 12. Status e última modificação *(planejado — fase 1c)*
+## 12. Status e última modificação
 
-- **RN-100** — Para cada tarefa: última execução (data, status, estatísticas), próxima execução agendada, total de arquivos e bytes.
-- **RN-101** — Para cada arquivo ou pasta de uma tarefa: data de modificação local; data de modificação e **autor da última modificação** no destino; data do último sync; situação — `sincronizado`, `alterado localmente`, `alterado no destino`, `pendente`, `conflito`, `ignorado`.
-- **RN-102** — Para pastas, a "última modificação" é a mais recente entre todos os arquivos dentro dela.
-- **RN-103** — A consulta de status usa o índice (instantânea, funciona offline); "Atualizar do destino" busca os dados atuais na nuvem.
+Tela **Tarefas → Status** e `syncly status <tarefa> [pasta] [--remote]`.
+
+- **RN-100** — Para cada tarefa: última execução (data, status, itens e bytes transferidos), próxima execução agendada (informada pelo systemd), total de arquivos e bytes — no computador agora e no último sync.
+- **RN-101** — Para cada arquivo ou pasta de uma tarefa que envia arquivo por arquivo: data de modificação local; data de modificação e **autor da última modificação** no destino (guardados a cada sync, ou da consulta ao destino); data do último sync; situação — `sincronizado`, `alterado localmente` (inclusive apagado no computador), `alterado no destino` (inclusive apagado lá ou só lá), `pendente` (novo), `conflito` (mudou dos dois lados), `ignorado` (excluído pelos filtros ou ilegível). Tarefas compactadas e que recebem mostram as versões em vez disso.
+- **RN-102** — Para pastas, a "última modificação" é a mais recente entre todos os arquivos dentro dela; a pasta também mostra quantos arquivos e bytes tem e a situação que mais pede atenção entre eles (arquivos ignorados não contam).
+- **RN-103** — A consulta de status usa o índice e uma varredura do computador sem hash (instantânea, funciona offline); sem consulta ao destino, ele é considerado como no último sync. "Atualizar do destino" lista o destino agora e guarda essa foto, usada até a próxima execução da tarefa (que a descarta); para um item sincronizado depois da foto, vale o índice.
 
 ## 13. Transferências avulsas
 

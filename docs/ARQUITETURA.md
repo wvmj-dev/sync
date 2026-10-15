@@ -90,7 +90,7 @@ src-tauri ──► service ──► gdrive ──► core
 ├── crates/
 │   ├── core/src/
 │   │   ├── domain/            # tipos e validações (account, job, schedule, rel_path, plan…)
-│   │   ├── sync/              # scanner, remote_tree, planner, guard, executor, retry
+│   │   ├── sync/              # scanner, remote_tree, planner, guard, executor, retry, status
 │   │   ├── archive/           # compactar/descompactar zip e tar (gz, zst), nome e impressão digital das versões
 │   │   ├── backup/            # retention: quais versões manter (RN-54)
 │   │   ├── providers/local.rs # LocalProvider
@@ -103,7 +103,7 @@ src-tauri ──► service ──► gdrive ──► core
 │   │   ├── lock.rs            # trava exclusiva por tarefa
 │   │   └── paths.rs           # diretórios XDG
 │   ├── gdrive/src/            # auth, oauth, client, provider, endpoints, query, error
-│   ├── service/src/           # service (tarefas/execução), delivery (envio compactado), restore, receive, google, transfers, archive, secrets, dto, logging
+│   ├── service/src/           # service (tarefas/execução), delivery (envio compactado), restore, receive, schedule, status, os, google, transfers, archive, secrets, dto, logging
 │   └── cli/src/
 ├── src-tauri/
 │   ├── capabilities/default.json  # allowlist de comandos da janela
@@ -124,7 +124,7 @@ src-tauri ──► service ──► gdrive ──► core
 |---|---|---|---|
 | Configuração (contas, tarefas, preferências) | `~/.config/syncly/config.toml` | TOML versionado (`version = 1`) | `0600` |
 | Cliente OAuth do Google | `~/.config/syncly/google-client.json` | JSON baixado do Google Cloud | `0600` |
-| Estado (índice, execuções, versões enviadas e recebidas) | `~/.local/share/syncly/state.db` | SQLite (WAL) | dir `0700` |
+| Estado (índice, execuções, versões enviadas e recebidas, foto do destino) | `~/.local/share/syncly/state.db` | SQLite (WAL) | dir `0700` |
 | Temporários (envio compactado, restauração, recebimento, avulsos) | `~/.local/share/syncly/tmp/<tarefa ou avulsos>/.syncly-tmp-*` | apagados ao fim de cada execução | dir `0700` |
 | Logs | `~/.local/state/syncly/logs/` (`syncly-desktop.AAAA-MM-DD.log`, `syncly-cli.…`) | texto, rotação diária, 14 dias; nível via `SYNCLY_LOG` | dir `0700` |
 | Travas | `$XDG_RUNTIME_DIR/syncly/` | arquivo + `flock` | dir `0700` |
@@ -204,6 +204,16 @@ execução `receive`.
 `archive-progress`, `cancel_archive`) e temporários em `tmp/avulsos/`.
 
 Planejado: criptografia `age` com manifesto (fase 2e).
+
+## 7.1 Status (RN-100 a RN-103)
+
+`Service::job_status` junta, sem rede, a varredura do computador (sem hash) e o índice;
+`sync::status::compute` (função pura) dá a situação de cada item e agrega as pastas. O
+índice guarda, a cada sync, a data e o autor da modificação no destino (migração 4).
+"Atualizar do destino" (`refresh_job_status`) lista o destino e grava uma foto
+(`remote_snapshot`), que vale até a próxima execução da tarefa. A UI navega pasta a pasta
+(no máximo 1000 itens por pasta). A próxima execução vem do systemd
+(`systemctl show --timestamp=unix`), numa chamada só para todos os timers.
 
 ## 8. Agendamento e notificações
 
@@ -321,7 +331,7 @@ Planejado: criptografia `age` com manifesto (fase 2e).
 | 0 | Esqueleto: workspace, domínio, validações, filtros, planejador, guardas, retenção, estado, `LocalProvider`, logs, prévia de sincronização, UI base | ✅ |
 | 1a | Login Google (PKCE + keyring), provedor Drive, transferências avulsas (enviar/baixar) | ✅ |
 | 1b | Executor, sync manual (modo envio/espelho) com progresso e cancelamento | ✅ |
-| 1c | Status e última modificação (RN-100 a RN-103) | |
+| 1c | Status e última modificação (RN-100 a RN-103) | ✅ |
 | 2a | Compactar e descompactar (zip, tar, tar.gz, tar.zst) | ✅ |
 | 2b | Envio compactado: versões com data, retenção, backup local/remoto | ✅ |
 | 2c | Restaurar versão (baixar, conferir e descompactar numa pasta nova) | ✅ |

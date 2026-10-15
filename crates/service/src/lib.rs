@@ -13,6 +13,7 @@ mod restore;
 mod schedule;
 pub mod secrets;
 mod service;
+mod status;
 #[cfg(test)]
 mod test_support;
 mod transfers;

@@ -505,9 +505,24 @@ textarea {
   background: var(--danger-bg);
 }
 
-.tag-adopt {
+.tag-adopt,
+.tag-synced {
   color: var(--ok);
   background: var(--ok-bg);
+}
+
+.tag-pending,
+.tag-locally_changed {
+  color: var(--accent);
+}
+
+.tag-remotely_changed {
+  color: var(--warning);
+  background: var(--warning-bg);
+}
+
+.tag-ignored {
+  color: var(--muted);
 }
 
 details summary {

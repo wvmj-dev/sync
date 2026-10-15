@@ -59,6 +59,8 @@ fn main() {
             commands::upload_compressed,
             commands::run_job,
             commands::cancel_run,
+            commands::job_status,
+            commands::refresh_job_status,
             commands::list_versions,
             commands::restore_version,
             commands::compress_paths,

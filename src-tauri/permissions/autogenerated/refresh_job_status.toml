@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-refresh-job-status"
+description = "Enables the refresh_job_status command without any pre-configured scope."
+commands.allow = ["refresh_job_status"]
+
+[[permission]]
+identifier = "deny-refresh-job-status"
+description = "Denies the refresh_job_status command without any pre-configured scope."
+commands.deny = ["refresh_job_status"]

@@ -69,6 +69,9 @@ export interface RunSummary {
   startedAt: string;
   finishedAt: string | null;
   error: string | null;
+  /** RN-100: itens transferidos e bytes. */
+  items: number | null;
+  bytes: number | null;
 }
 
 export interface SyncSummary {
@@ -81,6 +84,8 @@ export interface SyncSummary {
   schedule: string;
   scheduleSpec: Schedule;
   scheduleState: ScheduleState;
+  /** RN-100: próximo disparo do timer, se ativo. */
+  nextRun: string | null;
 }
 
 export interface JobSummary {
@@ -116,6 +121,58 @@ export interface VersionItem {
   accountLabel: string | null;
   /** Pasta no destino, relativa à raiz do app. */
   path: string;
+}
+
+/** RN-101. */
+export type Situation =
+  | "ignored"
+  | "synced"
+  | "pending"
+  | "remotely_changed"
+  | "locally_changed"
+  | "conflict";
+
+export interface ItemStatus {
+  path: string;
+  name: string;
+  kind: "file" | "folder";
+  situation: Situation;
+  detail: string | null;
+  /** Arquivo: tamanho; pasta: soma dos arquivos dentro (RN-102). */
+  size: number;
+  /** Arquivos dentro (pasta); 1 para arquivo. */
+  files: number;
+  localModified: string | null;
+  remoteModified: string | null;
+  remoteModifiedBy: string | null;
+  syncedAt: string | null;
+}
+
+export interface SituationCounts {
+  synced: number;
+  pending: number;
+  locallyChanged: number;
+  remotelyChanged: number;
+  conflict: number;
+  ignored: number;
+}
+
+/** RN-100 a RN-103. */
+export interface JobStatus {
+  jobId: string;
+  folder: string;
+  /** Tarefas compactadas ou que recebem não têm status por arquivo. */
+  perFile: boolean;
+  items: ItemStatus[];
+  totalItems: number;
+  counts: SituationCounts;
+  localFiles: number;
+  localBytes: number;
+  syncedFiles: number;
+  syncedBytes: number;
+  /** `null` = dados do último sync. */
+  remoteCheckedAt: string | null;
+  durationMs: number;
 }
 
 export interface RemoteItem {

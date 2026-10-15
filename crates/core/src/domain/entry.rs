@@ -48,4 +48,7 @@ pub struct IndexEntry {
     pub remote_id: String,
     pub remote_hash: Option<String>,
     pub synced_at: DateTime<Utc>,
+    /// RN-101: modificação no destino como estava no último sync (o Drive informa).
+    pub remote_modified_at: Option<DateTime<Utc>>,
+    pub remote_modified_by: Option<String>,
 }

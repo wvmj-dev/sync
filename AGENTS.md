@@ -8,9 +8,9 @@ detalhado fica em [`.agents/`](.agents/README.md) e deve ser lido **sob demanda*
 
 App desktop para sincronizar e fazer backup de pastas com o Google Drive (outros
 provedores depois). Tauri 2 + Rust (núcleo) + Vue 3/TypeScript (UI) + CLI `syncly`.
-Fases concluídas: **0, 1a, 1b, 2a a 2d e 3a** — sincronização (Drive e pasta local),
-transferências avulsas, compactação, envio compactado com versões (backup), restauração,
-recebimento e agendamento (systemd + notificações) funcionando. Próximas: **1c** (status),
+Fases concluídas: **0, 1a a 1c, 2a a 2d e 3a** — sincronização (Drive e pasta local), status
+por arquivo, transferências avulsas, compactação, envio compactado com versões (backup),
+restauração, recebimento e agendamento (systemd + notificações) funcionando. Próximas:
 **2e** (criptografia) e **3b** (bandeja). Roadmap em `docs/ARQUITETURA.md` §13.
 
 Fonte da verdade — leia antes de mudar comportamento:
@@ -23,10 +23,10 @@ Fonte da verdade — leia antes de mudar comportamento:
 
 Não presuma que algo existe só porque está nos docs — os docs descrevem o projeto completo.
 
-| Já funciona (fases 0, 1a, 1b, 2a a 2d e 3a) | Ainda **não** existe |
+| Já funciona (fases 0, 1a a 1c, 2a a 2d e 3a) | Ainda **não** existe |
 |---|---|
 | Domínio e validações; **executor** (`sync/executor.rs`) com progresso, cancelamento e histórico | Paralelizar a listagem remota (hoje uma pasta por vez) |
-| Varredura local com filtros, `.syncignore`, bloqueios e exclusões | Status / última modificação (RN-100 a RN-103) |
+| Varredura local com filtros, `.syncignore`, bloqueios e exclusões | Conta "requer reconexão" (RN-06, RN-85) |
 | Planejador, guardas, política de retry, retenção (funções puras) | Testar o recebimento entre dois computadores (RN-107) |
 | Estado em SQLite, config TOML, trava por tarefa, logs em arquivo | Ícone na bandeja; adiar execução sem rede/keyring (RN-84) |
 | `LocalProvider` e `GDriveProvider` (Drive: OAuth PKCE, keyring, limitador, retry, envio retomável) | Changes API, download/bidirecional |
@@ -36,6 +36,7 @@ Não presuma que algo existe só porque está nos docs — os docs descrevem o p
 | **Restaurar versão** (`service/src/restore.rs`, `syncly versions`/`restore`, tela Tarefas → Versões) | |
 | **Receber** (`Delivery::Receive`, `service/src/receive.rs`); avulsos "baixar e descompactar" e "enviar pasta compactada" (`transfers.rs`, `remote get --extract`/`put --compress`) | |
 | **Agendamento** (`core/src/timers.rs` puro, `service/src/schedule.rs`, `os.rs`; `syncly schedule`; modo sem janela `syncly-desktop run <id> --scheduled`) e notificações D-Bus (RN-94) | |
+| **Status** (`sync/status.rs` puro, `service/src/status.rs`; `syncly status`; tela Tarefas → Status; foto do destino no `state.db`) | |
 
 `docs/REGRAS_DE_NEGOCIO.md` marca como *(planejado)* as seções e regras que ainda não existem.
 
@@ -68,6 +69,7 @@ cargo run -p syncly-cli -- google connect               # abre o navegador (cont
 cargo run -p syncly-cli -- remote ls|put|get …          # arquivos avulsos em Syncly/
 cargo run -p syncly-cli -- archive create|extract …     # zip, tar, tar.gz, tar.zst
 cargo run -p syncly-cli -- schedule                     # atualiza os timers (systemd real!)
+cargo run -p syncly-cli -- status <tarefa> [pasta] [--remote]   # situação e última modificação
 ```
 
 Testes do Drive usam `wiremock` (Google simulado) e `secrets::MemoryStore` (nunca o keyring

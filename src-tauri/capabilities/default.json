@@ -23,6 +23,8 @@
     "allow-upload-compressed",
     "allow-run-job",
     "allow-cancel-run",
+    "allow-job-status",
+    "allow-refresh-job-status",
     "allow-list-versions",
     "allow-restore-version",
     "allow-compress-paths",

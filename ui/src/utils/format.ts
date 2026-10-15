@@ -3,6 +3,7 @@ import type {
   ArchiveFormat,
   RunStatus,
   ScheduleState,
+  Situation,
   SyncMode,
   SyncSummary,
   Weekday,
@@ -52,6 +53,15 @@ export function deliveryLabel(sync: SyncSummary): string {
       return modeLabel[sync.mode];
   }
 }
+
+export const situationLabel: Record<Situation, string> = {
+  synced: "Sincronizado",
+  pending: "Pendente",
+  locally_changed: "Alterado aqui",
+  remotely_changed: "Alterado no destino",
+  conflict: "Conflito",
+  ignored: "Ignorado",
+};
 
 export const scheduleStateLabel: Record<ScheduleState, string> = {
   manual: "",

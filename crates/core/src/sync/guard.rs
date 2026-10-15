@@ -210,6 +210,8 @@ mod tests {
                         remote_id: p.to_string(),
                         remote_hash: None,
                         synced_at: Utc::now(),
+                        remote_modified_at: None,
+                        remote_modified_by: None,
                     },
                 )
             })

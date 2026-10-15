@@ -283,11 +283,38 @@ impl Service {
         let config = self.load()?;
         let state = self.state()?;
         let unit_dir = self.paths.systemd_unit_dir();
-        config
+        let mut jobs = config
             .jobs
             .iter()
             .map(|j| job_summary(&config, &state, &unit_dir, j))
-            .collect()
+            .collect::<ServiceResult<Vec<_>>>()?;
+        self.fill_next_runs(&mut jobs);
+        Ok(jobs)
+    }
+
+    /// RN-100: próximo disparo dos timers ativos, numa única consulta ao systemd. Sem
+    /// systemd, a informação só fica de fora.
+    fn fill_next_runs(&self, jobs: &mut [JobSummary]) {
+        let timer = |id: Uuid| format!("{}.timer", syncly_core::timers::unit_base(id));
+        let active: Vec<String> = jobs
+            .iter()
+            .filter(|j| {
+                j.sync
+                    .as_ref()
+                    .is_some_and(|s| s.schedule_state == "active")
+            })
+            .map(|j| timer(j.id))
+            .collect();
+        match self.os.next_runs(&active) {
+            Ok(next) => {
+                for job in jobs.iter_mut() {
+                    if let Some(sync) = job.sync.as_mut() {
+                        sync.next_run = next.get(&timer(job.id)).copied();
+                    }
+                }
+            }
+            Err(e) => tracing::debug!("próximas execuções indisponíveis: {e}"),
+        }
     }
 
     pub fn find_job_id(&self, key: &str) -> ServiceResult<Uuid> {
@@ -352,7 +379,15 @@ impl Service {
         self.refresh_schedules();
         let config = self.load()?;
         let job = config.job(id).ok_or(ServiceError::NotFound("tarefa"))?;
-        job_summary(&config, &self.state()?, &self.paths.systemd_unit_dir(), job)
+        let mut summary = [job_summary(
+            &config,
+            &self.state()?,
+            &self.paths.systemd_unit_dir(),
+            job,
+        )?];
+        self.fill_next_runs(&mut summary);
+        let [summary] = summary;
+        Ok(summary)
     }
 
     pub fn delete_job(&self, id: Uuid) -> ServiceResult<()> {
@@ -537,6 +572,10 @@ impl Service {
         progress: impl Fn(&Progress) + Send + Sync,
     ) -> ServiceResult<RunReport> {
         let result = self.execute_job(id, options, progress).await;
+        // RN-103: a execução mudou o destino — a foto antiga deixa de valer.
+        if let Err(e) = self.state().and_then(|s| Ok(s.clear_snapshot(id)?)) {
+            tracing::warn!("foto do destino não descartada: {e}");
+        }
         // RN-36: a primeira execução manual bem-sucedida ativa o agendamento.
         if options.trigger == RunTrigger::Manual && result.is_ok() {
             self.refresh_schedules();
@@ -802,6 +841,7 @@ fn job_summary(
             schedule: s.schedule.label(),
             schedule_spec: s.schedule.clone(),
             schedule_state: schedule_state.as_str(),
+            next_run: None,
         }),
         last_run: state.last_run(job.id)?.map(Into::into),
     })

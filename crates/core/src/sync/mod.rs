@@ -7,3 +7,4 @@ pub mod planner;
 pub mod remote_tree;
 pub mod retry;
 pub mod scanner;
+pub mod status;

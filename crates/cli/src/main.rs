@@ -5,12 +5,12 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use syncly_core::domain::{Delivery, SyncMode};
+use syncly_core::domain::{Delivery, EntryKind, SyncMode};
 use syncly_core::sync::executor::ExecutionReport;
 use syncly_core::sync::guard::GuardVerdict;
 use syncly_service::dto::{
-    ArchivePreview, PlanPreview, ReceivePreview, RemoteItem, RunReport, UploadCompressedRequest,
-    human_bytes,
+    ArchivePreview, JobStatus, JobSummary, PlanPreview, ReceivePreview, RemoteItem, RunReport,
+    UploadCompressedRequest, human_bytes,
 };
 use syncly_service::{
     AppPaths, ArchiveFormat, ArchiveProgress, CompressRequest, ExtractResult, Progress, RunOptions,
@@ -52,6 +52,17 @@ enum Command {
         /// Usado pelos timers do systemd (RN-43: nunca confirma sozinho).
         #[arg(long, hide = true)]
         scheduled: bool,
+    },
+    /// Status e última modificação de uma pasta da tarefa (RN-100 a RN-103).
+    Status {
+        /// Nome ou ID da tarefa.
+        job: String,
+        /// Pasta dentro do destino (padrão: a raiz da tarefa).
+        #[arg(default_value = "", value_name = "PASTA")]
+        folder: String,
+        /// Consulta o destino agora (mostra o que mudou lá e os conflitos).
+        #[arg(long)]
+        remote: bool,
     },
     /// Lista as versões enviadas por uma tarefa compactada.
     Versions {
@@ -303,6 +314,24 @@ async fn run(cli: Cli) -> Result<ExitCode, syncly_service::ServiceError> {
                 }
                 Err(e) => Err(e),
             };
+        }
+        Command::Status {
+            job,
+            folder,
+            remote,
+        } => {
+            let id = service.find_job_id(&job)?;
+            let summary = service
+                .list_jobs()?
+                .into_iter()
+                .find(|j| j.id == id)
+                .ok_or(ServiceError::NotFound("tarefa"))?;
+            let status = if remote {
+                service.refresh_job_status(id, &folder).await?
+            } else {
+                service.job_status(id, &folder).await?
+            };
+            print_status(&summary, &status);
         }
         Command::Versions { job } => {
             let id = service.find_job_id(&job)?;
@@ -612,6 +641,90 @@ fn print_counts(e: &ExecutionReport) {
             "  {} arquivo(s) mudaram durante o envio e vão de novo na próxima execução",
             e.unstable
         );
+    }
+}
+
+fn when(t: Option<chrono::DateTime<chrono::Utc>>) -> String {
+    t.map(|t| {
+        t.with_timezone(&chrono::Local)
+            .format("%d/%m/%Y %H:%M")
+            .to_string()
+    })
+    .unwrap_or_else(|| "—".into())
+}
+
+/// RN-100 a RN-103.
+fn print_status(job: &JobSummary, s: &JobStatus) {
+    match &job.last_run {
+        Some(r) => {
+            let mut numbers = String::new();
+            if let Some(items) = r.items {
+                numbers.push_str(&format!(", {items} item(ns)"));
+            }
+            if let Some(bytes) = r.bytes {
+                numbers.push_str(&format!(", {}", human_bytes(bytes)));
+            }
+            println!(
+                "Última execução: {} em {}{numbers}",
+                r.status,
+                when(Some(r.started_at))
+            );
+        }
+        None => println!("Última execução: nunca"),
+    }
+    if let Some(sync) = &job.sync {
+        match sync.next_run {
+            Some(next) => println!("Próxima execução: {}", when(Some(next))),
+            None => println!("Próxima execução: — ({})", sync.schedule),
+        }
+    }
+    if !s.per_file {
+        println!("Tarefa compactada ou que recebe: veja `syncly versions` e o histórico.");
+        return;
+    }
+    println!(
+        "No computador: {} arquivo(s), {} · no último sync: {} arquivo(s), {}",
+        s.local_files,
+        human_bytes(s.local_bytes),
+        s.synced_files,
+        human_bytes(s.synced_bytes)
+    );
+    let c = &s.counts;
+    println!(
+        "Sincronizados {} · pendentes {} · alterados aqui {} · no destino {} · conflitos {} · ignorados {}",
+        c.synced, c.pending, c.locally_changed, c.remotely_changed, c.conflict, c.ignored
+    );
+    match s.remote_checked_at {
+        Some(t) => println!("Destino consultado em {}", when(Some(t))),
+        None => println!("Destino: dados do último sync (use --remote para consultar agora)"),
+    }
+    println!();
+    println!(
+        "{:<20} {:<16} {:<16} {:<16} NOME",
+        "SITUAÇÃO", "AQUI", "NO DESTINO", "ÚLTIMO SYNC"
+    );
+    for item in &s.items {
+        let name = if item.kind == EntryKind::Folder {
+            format!("{}/  ({} arquivo(s))", item.name, item.files)
+        } else {
+            item.name.clone()
+        };
+        let by = item
+            .remote_modified_by
+            .as_deref()
+            .map(|b| format!(" por {b}"))
+            .unwrap_or_default();
+        let detail = item.detail.map(|d| format!(" — {d}")).unwrap_or_default();
+        println!(
+            "{:<20} {:<16} {:<16} {:<16} {name}{by}{detail}",
+            item.situation.label(),
+            when(item.local_modified),
+            when(item.remote_modified),
+            when(item.synced_at)
+        );
+    }
+    if s.total_items > s.items.len() {
+        println!("… {} itens no total", s.total_items);
     }
 }
 

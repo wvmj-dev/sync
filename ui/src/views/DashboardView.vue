@@ -91,7 +91,11 @@ const archiveJobs = computed(
             {{ job.name }}
             <span v-if="!job.enabled" class="badge">desativada</span>
           </td>
-          <td>{{ job.sync?.schedule ?? "—" }}</td>
+          <td>
+            {{ job.sync?.schedule ?? "—" }}
+            <span v-if="job.sync?.nextRun" class="muted small">
+              · próxima {{ formatDate(job.sync.nextRun) }}</span>
+          </td>
           <td>
             <template v-if="job.lastRun">
               {{ runStatusLabel[job.lastRun.status] }} · {{ formatDate(job.lastRun.startedAt) }}

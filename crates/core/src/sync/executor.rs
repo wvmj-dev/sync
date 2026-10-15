@@ -322,6 +322,8 @@ impl Ctx<'_> {
                     remote_id: entry.id.clone(),
                     remote_hash: None,
                     synced_at: Utc::now(),
+                    remote_modified_at: entry.modified_at,
+                    remote_modified_by: entry.modified_by.clone(),
                 });
                 if indexed {
                     let mut shared = self.lock();
@@ -402,6 +404,8 @@ impl Ctx<'_> {
             remote_id: entry.id.clone(),
             remote_hash: entry.hash.clone(),
             synced_at: Utc::now(),
+            remote_modified_at: entry.modified_at,
+            remote_modified_by: entry.modified_by.clone(),
         });
         if indexed {
             let mut shared = self.lock();
@@ -465,6 +469,8 @@ impl Ctx<'_> {
             remote_id: remote_id.to_string(),
             remote_hash: remote.hash.clone(),
             synced_at: Utc::now(),
+            remote_modified_at: remote.modified_at,
+            remote_modified_by: remote.modified_by.clone(),
         });
         if indexed {
             self.lock().report.adopted += 1;

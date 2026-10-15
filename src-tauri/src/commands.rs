@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 use syncly_service::dto::{
-    AccountSummary, AppInfo, JobDraft, JobSummary, PlanPreview, RemoteItem, RunReport,
+    AccountSummary, AppInfo, JobDraft, JobStatus, JobSummary, PlanPreview, RemoteItem, RunReport,
     UploadCompressedRequest, VersionItem,
 };
 use syncly_service::{
@@ -120,6 +120,26 @@ pub async fn run_job(
         })
         .await?;
     Ok(report)
+}
+
+/// Status de uma pasta da tarefa, sem rede (RN-100 a RN-103).
+#[tauri::command]
+pub async fn job_status(
+    service: State<'_, Service>,
+    id: Uuid,
+    folder: String,
+) -> ApiResult<JobStatus> {
+    Ok(service.job_status(id, &folder).await?)
+}
+
+/// "Atualizar do destino": consulta o destino agora (RN-103).
+#[tauri::command]
+pub async fn refresh_job_status(
+    service: State<'_, Service>,
+    id: Uuid,
+    folder: String,
+) -> ApiResult<JobStatus> {
+    Ok(service.refresh_job_status(id, &folder).await?)
 }
 
 /// Versões enviadas por uma tarefa compactada (RN-50).

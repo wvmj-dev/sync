@@ -11,6 +11,7 @@ import type {
   ApiErrorCode,
   AppInfo,
   JobDraft,
+  JobStatus,
   JobSummary,
   PlanPreview,
   RemoteItem,
@@ -61,6 +62,11 @@ export const api = {
   /** Sem `confirm`, pode falhar com o código `needs_confirmation` (RN-36, RN-42). */
   runJob: (id: string, confirm: boolean) => call<RunReport>("run_job", { id, confirm }),
   cancelRun: (id: string) => call<boolean>("cancel_run", { id }),
+  /** RN-100 a RN-103: sem rede (computador + último sync). */
+  jobStatus: (id: string, folder: string) => call<JobStatus>("job_status", { id, folder }),
+  /** RN-103: "Atualizar do destino" — consulta o destino agora. */
+  refreshJobStatus: (id: string, folder: string) =>
+    call<JobStatus>("refresh_job_status", { id, folder }),
   listVersions: (jobId: string) => call<VersionItem[]>("list_versions", { jobId }),
   /** Baixa, confere e descompacta numa pasta nova dentro de `destDir` (RN-57, RN-58).
    * Progresso pelo evento `run-progress`; cancela com `cancelRun(jobId)`. */

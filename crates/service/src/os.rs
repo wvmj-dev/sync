@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 
 use crate::error::{ServiceError, ServiceResult};
 
@@ -17,10 +18,37 @@ pub trait OsIntegration: Send + Sync {
     fn exe(&self) -> ServiceResult<PathBuf>;
     /// `systemctl --user <args>` — argumentos fixos, nunca via shell.
     fn systemctl(&self, args: &[&str]) -> ServiceResult<()>;
+    /// RN-100: próximo disparo de cada timer (os que não têm próximo ficam de fora).
+    fn next_runs(&self, timers: &[String]) -> ServiceResult<HashMap<String, DateTime<Utc>>>;
     /// RN-82: valida uma expressão `OnCalendar` com `systemd-analyze calendar`.
     fn verify_calendar(&self, expr: &str) -> ServiceResult<()>;
     /// RN-94: notificação na área de trabalho.
     async fn notify(&self, title: &str, body: &str) -> ServiceResult<()>;
+}
+
+/// Saída de `systemctl show --timestamp=unix -p Id -p NextElapseUSecRealtime …`: blocos
+/// separados por linha em branco, com `Id=x.timer` e `NextElapseUSecRealtime=@<segundos>`.
+fn parse_next_runs(output: &str) -> HashMap<String, DateTime<Utc>> {
+    let mut out = HashMap::new();
+    for block in output.split("\n\n") {
+        let mut id = None;
+        let mut next = None;
+        for line in block.lines() {
+            if let Some(v) = line.strip_prefix("Id=") {
+                id = Some(v.trim().to_string());
+            } else if let Some(v) = line.strip_prefix("NextElapseUSecRealtime=@") {
+                next = v
+                    .trim()
+                    .parse::<i64>()
+                    .ok()
+                    .and_then(|s| DateTime::from_timestamp(s, 0));
+            }
+        }
+        if let (Some(id), Some(next)) = (id, next) {
+            out.insert(id, next);
+        }
+    }
+    out
 }
 
 /// Linux com systemd e um servidor de notificações (GNOME, KDE…).
@@ -68,6 +96,19 @@ impl OsIntegration for LinuxDesktop {
         }
     }
 
+    fn next_runs(&self, timers: &[String]) -> ServiceResult<HashMap<String, DateTime<Utc>>> {
+        if timers.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let out = Command::new("systemctl")
+            .args(["--user", "show", "--timestamp=unix", "-p", "Id"])
+            .args(["-p", "NextElapseUSecRealtime"])
+            .args(timers)
+            .output()
+            .map_err(|e| ServiceError::Unavailable(format!("systemctl indisponível: {e}")))?;
+        Ok(parse_next_runs(&String::from_utf8_lossy(&out.stdout)))
+    }
+
     fn verify_calendar(&self, expr: &str) -> ServiceResult<()> {
         let out = Command::new("systemd-analyze")
             .args(["calendar", "--", expr])
@@ -111,5 +152,19 @@ impl OsIntegration for LinuxDesktop {
         .await
         .map_err(unavailable)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rn100_le_o_proximo_disparo_do_systemd() {
+        let out = "Id=syncly-a.timer\nNextElapseUSecRealtime=@1792384104\n\n\
+                   Id=syncly-b.timer\nNextElapseUSecRealtime=\n";
+        let next = parse_next_runs(out);
+        assert_eq!(next.len(), 1);
+        assert_eq!(next["syncly-a.timer"].timestamp(), 1_792_384_104);
     }
 }

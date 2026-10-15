@@ -17,6 +17,7 @@ import {
   scheduleStateLabel,
 } from "../utils/format";
 import PlanPreview from "./PlanPreview.vue";
+import StatusPanel from "./StatusPanel.vue";
 import VersionList from "./VersionList.vue";
 
 const props = defineProps<{ job: JobSummary }>();
@@ -38,6 +39,7 @@ const running = ref(false);
 /** O que está rodando: a execução da tarefa ou uma restauração. */
 const activity = ref<"run" | "restore">("run");
 const restored = ref<ExtractResult | null>(null);
+const showStatus = ref(false);
 const progress = ref<RunProgress | null>(null);
 const result = ref<RunReport | null>(null);
 const runError = ref<string | null>(null);
@@ -206,6 +208,15 @@ async function cancel() {
         >
           Versões
         </button>
+        <button
+          v-if="job.sync?.delivery.kind === 'files'"
+          class="btn"
+          type="button"
+          :aria-expanded="showStatus"
+          @click="showStatus = !showStatus"
+        >
+          Status
+        </button>
         <button class="btn btn-ghost" type="button" :disabled="running" @click="emit('edit')">
           Editar
         </button>
@@ -221,10 +232,17 @@ async function cancel() {
     <p class="muted small">
       Última execução:
       <template v-if="job.lastRun">
-        {{ runStatusLabel[job.lastRun.status] }} em {{ formatDate(job.lastRun.startedAt) }}
+        {{ runStatusLabel[job.lastRun.status] }} em {{ formatDate(job.lastRun.startedAt)
+        }}<template v-if="job.lastRun.items != null">, {{ job.lastRun.items }} item(ns)</template
+        ><template v-if="job.lastRun.bytes">, {{ formatBytes(job.lastRun.bytes) }}</template>
       </template>
       <template v-else>nunca</template>
+      <template v-if="job.sync?.nextRun">
+        · Próxima: {{ formatDate(job.sync.nextRun) }}
+      </template>
     </p>
+
+    <StatusPanel v-if="showStatus && !running" :key="job.lastRun?.startedAt" :job-id="job.id" />
 
     <section v-if="running" class="run" aria-live="polite">
       <div class="run-head">

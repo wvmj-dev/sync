@@ -22,7 +22,7 @@ e TAR. Tudo verificado por checksum.
 | Enviar, listar e baixar arquivos avulsos; **enviar pasta compactada** e **baixar e descompactar** | ✅ |
 | **Compactar e descompactar** (zip, tar, tar.gz, tar.zst), protegido contra arquivos maliciosos | ✅ |
 | Logs em arquivo com rotação | ✅ |
-| Tela de status / última modificação de cada arquivo | fase 1c |
+| **Status**: situação e última modificação de cada arquivo e pasta (aqui e no destino, e quem modificou), próxima execução | ✅ |
 | **Restaurar uma versão**: baixa, confere o checksum e descompacta numa pasta nova | ✅ |
 | **Receber**: tarefa que baixa a versão mais recente e descompacta numa pasta nova | ✅ |
 | Criptografia das versões | fase 2e |
@@ -60,7 +60,7 @@ Para usar o Google Drive, configure antes o seu projeto no Google Cloud:
 |---|---|
 | **Visão geral** | Primeiros passos, tarefas e última execução, onde ficam config, dados e logs. |
 | **Contas** | **Conectar Google Drive** (abre o navegador; clique em *Continuar* no aviso "O Google não verificou este app" — é o seu próprio app) e adicionar **pastas locais** (HD externo, NAS). |
-| **Tarefas** | Criar uma tarefa (o que ela faz + destino + agendamento), **Pré-visualizar** e **Executar**. Na primeira execução o app pede confirmação; o agendamento só começa depois dela. Em tarefas compactadas, **Versões → Restaurar…** descompacta uma versão numa pasta nova. |
+| **Tarefas** | Criar uma tarefa (o que ela faz + destino + agendamento), **Pré-visualizar** e **Executar**. Na primeira execução o app pede confirmação; o agendamento só começa depois dela. **Status** mostra a situação de cada arquivo e pasta (funciona sem rede; **Atualizar do destino** consulta a nuvem). Em tarefas compactadas, **Versões → Restaurar…** descompacta uma versão numa pasta nova. |
 | **Arquivos** | Navegar na pasta `Syncly/` de uma conta, **enviar** e **baixar** arquivos avulsos, **enviar uma pasta compactada** e **baixar e descompactar** um `.zip`/`.tar.*`. |
 | **Compactar** | Compactar pastas/arquivos em ZIP, TAR.GZ, TAR.ZST ou TAR, e descompactar numa pasta nova. |
 
@@ -105,6 +105,8 @@ cargo run -p syncly-cli -- preview Documentos         # nome ou ID da tarefa
 cargo run -p syncly-cli -- run Documentos --confirm   # executa (1ª vez exige --confirm)
 cargo run -p syncly-cli -- jobs                       # mostra o tipo: envio, espelho ou compactado
 cargo run -p syncly-cli -- schedule                   # atualiza os timers e mostra o agendamento
+cargo run -p syncly-cli -- status Documentos          # situação e última modificação (sem rede)
+cargo run -p syncly-cli -- status Documentos Documentos/sub --remote   # consultando o destino
 cargo run -p syncly-cli -- versions Mundo             # versões de uma tarefa compactada
 cargo run -p syncly-cli -- restore Mundo --to ~/Restaurados   # a mais recente, numa pasta nova
 cargo run -p syncly-cli -- restore Mundo --to ~/Restaurados --version Mundo_2026-10-14

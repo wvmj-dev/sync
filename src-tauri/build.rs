@@ -17,6 +17,8 @@ const COMMANDS: &[&str] = &[
     "upload_compressed",
     "run_job",
     "cancel_run",
+    "job_status",
+    "refresh_job_status",
     "list_versions",
     "restore_version",
     "compress_paths",

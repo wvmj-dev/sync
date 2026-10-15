@@ -1,10 +1,12 @@
 //! Apoio aos testes: cofre em memória, Google simulado e um systemd de mentira — nunca o
 //! keyring, a conta, o systemd nem a sessão reais (AGENTS.md, regra 9).
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use syncly_core::paths::AppPaths;
 use syncly_gdrive::Endpoints;
 
@@ -19,6 +21,8 @@ pub const GOOGLE_CLIENT_JSON: &str =
 
 /// Executável que os timers de teste apontam (não precisa existir).
 pub const FAKE_EXE: &str = "/opt/syncly/syncly-teste";
+/// Próximo disparo que os timers de teste informam (segundos Unix).
+pub const FAKE_NEXT_RUN: i64 = 1_900_000_000;
 
 /// Registra o que seria feito no sistema, sem fazer nada.
 #[derive(Default)]
@@ -45,6 +49,12 @@ impl OsIntegration for FakeOs {
     fn systemctl(&self, args: &[&str]) -> ServiceResult<()> {
         self.record(format!("systemctl {}", args.join(" ")));
         Ok(())
+    }
+
+    /// Todo timer pedido "dispara" num horário fixo; não registra a chamada (é só leitura).
+    fn next_runs(&self, timers: &[String]) -> ServiceResult<HashMap<String, DateTime<Utc>>> {
+        let at = DateTime::from_timestamp(FAKE_NEXT_RUN, 0).unwrap();
+        Ok(timers.iter().map(|t| (t.clone(), at)).collect())
     }
 
     /// Recusa expressões com "inválida", como o `systemd-analyze` faria.

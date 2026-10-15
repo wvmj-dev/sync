@@ -9,6 +9,7 @@ use syncly_core::archive::ArchiveFormat;
 use syncly_core::domain::{Action, Delivery, PlanStats, RunRecord, RunStatus, Schedule, SyncMode};
 use syncly_core::sync::executor::ExecutionReport;
 use syncly_core::sync::guard::GuardVerdict;
+use syncly_core::sync::status::{ItemStatus, SituationCounts};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize)]
@@ -64,6 +65,8 @@ pub struct SyncSummary {
     pub schedule_spec: Schedule,
     /// `manual`, `disabled`, `waiting_first_run` (RN-36), `active` ou `not_installed`.
     pub schedule_state: &'static str,
+    /// RN-100: próximo disparo do timer, se ativo.
+    pub next_run: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -75,10 +78,19 @@ pub struct RunSummary {
     pub started_at: DateTime<Utc>,
     pub finished_at: Option<DateTime<Utc>>,
     pub error: Option<String>,
+    /// RN-100: itens transferidos (enviados, atualizados, conflitos, lixeira ou extraídos).
+    pub items: Option<u64>,
+    /// RN-100: bytes enviados ou extraídos.
+    pub bytes: Option<u64>,
 }
 
 impl From<RunRecord> for RunSummary {
     fn from(r: RunRecord) -> Self {
+        let stat = |key: &str| r.stats.as_ref().and_then(|s| s.get(key)?.as_u64());
+        let items: Vec<u64> = ["uploaded", "updated", "conflicts", "trashed", "files"]
+            .iter()
+            .filter_map(|k| stat(k))
+            .collect();
         Self {
             kind: r.kind.as_str(),
             trigger: r.trigger.as_str(),
@@ -86,9 +98,39 @@ impl From<RunRecord> for RunSummary {
             started_at: r.started_at,
             finished_at: r.finished_at,
             error: r.error,
+            items: (!items.is_empty()).then(|| items.iter().sum()),
+            bytes: stat("bytesSent").or_else(|| stat("bytes")),
         }
     }
 }
+
+/// Status de uma pasta de uma tarefa (RN-100 a RN-103).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JobStatus {
+    pub job_id: Uuid,
+    /// Pasta mostrada, relativa ao destino (`""` = raiz da tarefa).
+    pub folder: String,
+    /// Só tarefas que enviam arquivo por arquivo têm status por arquivo; as compactadas
+    /// mostram as versões.
+    pub per_file: bool,
+    /// Itens dentro de `folder` (até `MAX_STATUS_ITEMS`; total em `total_items`).
+    pub items: Vec<ItemStatus>,
+    pub total_items: usize,
+    /// Arquivos da tarefa inteira em cada situação.
+    pub counts: SituationCounts,
+    /// RN-100: no computador agora.
+    pub local_files: u64,
+    pub local_bytes: u64,
+    /// RN-100: no último sync.
+    pub synced_files: u64,
+    pub synced_bytes: u64,
+    /// RN-103: quando o destino foi consultado; `None` = dados do último sync.
+    pub remote_checked_at: Option<DateTime<Utc>>,
+    pub duration_ms: u64,
+}
+
+pub const MAX_STATUS_ITEMS: usize = 1000;
 
 /// Criação/edição de tarefa vinda da UI. Campos que a UI ainda não edita
 /// (agendamento, guardas) são preservados ao editar.

@@ -5,13 +5,14 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use chrono::{DateTime, SecondsFormat, Utc};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use uuid::Uuid;
 
 use crate::domain::{EntryKind, IndexEntry, RunKind, RunRecord, RunStatus, RunTrigger};
 use crate::error::{CoreError, CoreResult, IoContext};
 use crate::fsutil::create_private_file;
 use crate::provider::RemoteEntry;
+use crate::sync::status::{RemoteInfo, RemoteSnapshot};
 
 /// Migrações sequenciais; a posição no array é a versão (`PRAGMA user_version`).
 /// Nunca altere uma migração já publicada — acrescente outra.
@@ -95,6 +96,26 @@ const MIGRATIONS: &[&str] = &[
         received_at TEXT    NOT NULL
     );
     CREATE INDEX received_by_job ON received (job_id, received_at DESC);
+",
+    // 4: status (RN-101, RN-103) — modificação no destino guardada no sync e a "foto" do
+    // destino tirada por "Atualizar do destino".
+    r"
+    ALTER TABLE file_index ADD COLUMN remote_modified_at TEXT;
+    ALTER TABLE file_index ADD COLUMN remote_modified_by TEXT;
+    CREATE TABLE remote_snapshot (
+        job_id      TEXT    NOT NULL,
+        path        TEXT    NOT NULL,
+        kind        TEXT    NOT NULL,
+        size        INTEGER,
+        hash        TEXT,
+        modified_at TEXT,
+        modified_by TEXT,
+        PRIMARY KEY (job_id, path)
+    );
+    CREATE TABLE remote_snapshot_meta (
+        job_id     TEXT PRIMARY KEY,
+        fetched_at TEXT NOT NULL
+    );
 ",
 ];
 
@@ -241,12 +262,14 @@ impl StateDb {
 
     pub fn load_index(&self, job_id: Uuid) -> CoreResult<BTreeMap<String, IndexEntry>> {
         let mut stmt = self.conn.prepare_cached(
-            "SELECT path, kind, local_size, local_mtime_ns, local_hash, remote_id, remote_hash, synced_at
+            "SELECT path, kind, local_size, local_mtime_ns, local_hash, remote_id, remote_hash,
+                    synced_at, remote_modified_at, remote_modified_by
              FROM file_index WHERE job_id = ?1",
         )?;
         let rows = stmt.query_map(params![job_id.to_string()], |r| {
             let kind: String = r.get(1)?;
             let synced_at: String = r.get(7)?;
+            let remote_modified_at: Option<String> = r.get(8)?;
             Ok(IndexEntry {
                 path: r.get(0)?,
                 kind: EntryKind::parse(&kind).ok_or_else(|| bad_value("tipo", &kind))?,
@@ -256,6 +279,8 @@ impl StateDb {
                 remote_id: r.get(5)?,
                 remote_hash: r.get(6)?,
                 synced_at: parse_ts(&synced_at)?,
+                remote_modified_at: remote_modified_at.as_deref().map(parse_ts).transpose()?,
+                remote_modified_by: r.get(9)?,
             })
         })?;
         let mut out = BTreeMap::new();
@@ -272,13 +297,16 @@ impl StateDb {
         {
             let mut stmt = tx.prepare_cached(
                 "INSERT INTO file_index
-                   (job_id, path, kind, local_size, local_mtime_ns, local_hash, remote_id, remote_hash, synced_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                   (job_id, path, kind, local_size, local_mtime_ns, local_hash, remote_id, remote_hash,
+                    synced_at, remote_modified_at, remote_modified_by)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
                  ON CONFLICT (job_id, path) DO UPDATE SET
                    kind = excluded.kind, local_size = excluded.local_size,
                    local_mtime_ns = excluded.local_mtime_ns, local_hash = excluded.local_hash,
                    remote_id = excluded.remote_id, remote_hash = excluded.remote_hash,
-                   synced_at = excluded.synced_at",
+                   synced_at = excluded.synced_at,
+                   remote_modified_at = excluded.remote_modified_at,
+                   remote_modified_by = excluded.remote_modified_by",
             )?;
             let job = job_id.to_string();
             for e in entries {
@@ -292,6 +320,8 @@ impl StateDb {
                     e.remote_id,
                     e.remote_hash,
                     ts(e.synced_at),
+                    e.remote_modified_at.map(ts),
+                    e.remote_modified_by,
                 ])?;
             }
         }
@@ -316,7 +346,13 @@ impl StateDb {
     /// Esquece o índice e as versões registradas. Os arquivos no destino ficam como estão.
     pub fn clear_job(&mut self, job_id: Uuid) -> CoreResult<()> {
         let tx = self.conn.transaction()?;
-        for table in ["file_index", "archives", "received"] {
+        for table in [
+            "file_index",
+            "archives",
+            "received",
+            "remote_snapshot",
+            "remote_snapshot_meta",
+        ] {
             tx.execute(
                 &format!("DELETE FROM {table} WHERE job_id = ?1"),
                 params![job_id.to_string()],
@@ -430,6 +466,95 @@ impl StateDb {
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
+    // ---- Foto do destino (RN-103) ----
+
+    /// Substitui a foto do destino de uma tarefa.
+    pub fn save_snapshot(&mut self, job_id: Uuid, snapshot: &RemoteSnapshot) -> CoreResult<()> {
+        let job = job_id.to_string();
+        let tx = self.conn.transaction()?;
+        tx.execute(
+            "DELETE FROM remote_snapshot WHERE job_id = ?1",
+            params![job],
+        )?;
+        {
+            let mut stmt = tx.prepare_cached(
+                "INSERT INTO remote_snapshot (job_id, path, kind, size, hash, modified_at, modified_by)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            )?;
+            for (path, e) in &snapshot.entries {
+                stmt.execute(params![
+                    job,
+                    path,
+                    e.kind.as_str(),
+                    e.size.map(|s| i64::try_from(s).unwrap_or(i64::MAX)),
+                    e.hash,
+                    e.modified_at.map(ts),
+                    e.modified_by,
+                ])?;
+            }
+        }
+        tx.execute(
+            "INSERT INTO remote_snapshot_meta (job_id, fetched_at) VALUES (?1, ?2)
+             ON CONFLICT (job_id) DO UPDATE SET fetched_at = excluded.fetched_at",
+            params![job, ts(snapshot.fetched_at)],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn load_snapshot(&self, job_id: Uuid) -> CoreResult<Option<RemoteSnapshot>> {
+        let job = job_id.to_string();
+        let fetched: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT fetched_at FROM remote_snapshot_meta WHERE job_id = ?1",
+                params![job],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let Some(fetched) = fetched else {
+            return Ok(None);
+        };
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT path, kind, size, hash, modified_at, modified_by
+             FROM remote_snapshot WHERE job_id = ?1",
+        )?;
+        let rows = stmt.query_map(params![job], |r| {
+            let kind: String = r.get(1)?;
+            let modified: Option<String> = r.get(4)?;
+            Ok((
+                r.get::<_, String>(0)?,
+                RemoteInfo {
+                    kind: EntryKind::parse(&kind).ok_or_else(|| bad_value("tipo", &kind))?,
+                    size: r
+                        .get::<_, Option<i64>>(2)?
+                        .map(|s| u64::try_from(s).unwrap_or(0)),
+                    hash: r.get(3)?,
+                    modified_at: modified.as_deref().map(parse_ts).transpose()?,
+                    modified_by: r.get(5)?,
+                },
+            ))
+        })?;
+        Ok(Some(RemoteSnapshot {
+            fetched_at: parse_ts(&fetched)?,
+            entries: rows.collect::<Result<_, _>>()?,
+        }))
+    }
+
+    /// Uma execução muda o destino: a foto antiga deixa de valer.
+    pub fn clear_snapshot(&self, job_id: Uuid) -> CoreResult<()> {
+        let job = job_id.to_string();
+        self.conn.execute(
+            "DELETE FROM remote_snapshot WHERE job_id = ?1",
+            params![job],
+        )?;
+        self.conn.execute(
+            "DELETE FROM remote_snapshot_meta WHERE job_id = ?1",
+            params![job],
+        )?;
+        Ok(())
+    }
+
     // ---- Versões recebidas ----
 
     pub fn insert_received(&self, r: &ReceivedRecord) -> CoreResult<()> {
@@ -531,6 +656,8 @@ mod tests {
             remote_id: format!("id-{path}"),
             remote_hash: Some("h".into()),
             synced_at: Utc::now(),
+            remote_modified_at: None,
+            remote_modified_by: None,
         }
     }
 
@@ -599,6 +726,43 @@ mod tests {
         assert!(db.list_job_archives(Uuid::new_v4()).unwrap().is_empty());
         db.delete_archive(old.id).unwrap();
         assert_eq!(db.list_archives(job, account, "Backups").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn rn103_foto_do_destino() {
+        let mut db = StateDb::open_in_memory().unwrap();
+        let job = Uuid::new_v4();
+        assert_eq!(db.load_snapshot(job).unwrap(), None);
+        let mut entries = BTreeMap::new();
+        entries.insert(
+            "Docs/a.txt".to_string(),
+            RemoteInfo {
+                kind: EntryKind::File,
+                size: Some(3),
+                hash: Some("h".into()),
+                modified_at: DateTime::from_timestamp(1_700_000_000, 0),
+                modified_by: Some("Ana".into()),
+            },
+        );
+        let snapshot = RemoteSnapshot {
+            fetched_at: Utc::now(),
+            entries,
+        };
+        db.save_snapshot(job, &snapshot).unwrap();
+        let loaded = db.load_snapshot(job).unwrap().unwrap();
+        assert_eq!(loaded.entries, snapshot.entries);
+        // Substitui por inteiro.
+        db.save_snapshot(
+            job,
+            &RemoteSnapshot {
+                fetched_at: Utc::now(),
+                entries: BTreeMap::new(),
+            },
+        )
+        .unwrap();
+        assert!(db.load_snapshot(job).unwrap().unwrap().entries.is_empty());
+        db.clear_snapshot(job).unwrap();
+        assert_eq!(db.load_snapshot(job).unwrap(), None);
     }
 
     #[test]
