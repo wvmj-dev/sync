@@ -8,7 +8,6 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
 
 use chrono::{Local, NaiveDateTime, Utc};
-use syncly_core::CoreError;
 use syncly_core::archive::{
     self, ArchiveFormat, ArchiveProgress, CreateReport, CreateRequest, DISK_RESERVE_BYTES,
     fingerprint, version_name,
@@ -23,6 +22,7 @@ use syncly_core::sync::executor::{ExecutionReport, Failure, Progress};
 use syncly_core::sync::guard::{self, ArchiveGuardInput, GuardVerdict};
 use syncly_core::sync::remote_tree::resolve_path;
 use syncly_core::sync::scanner::{self, ScanRequest, ScanResult};
+use syncly_core::{CoreError, CoreResult};
 use uuid::Uuid;
 
 use crate::dto::{
@@ -32,7 +32,7 @@ use crate::error::{ServiceError, ServiceResult};
 use crate::service::{Loaded, RunOptions, Service, check_verdict, elapsed_ms, quota_shortfall};
 
 /// Prefixo dos temporários do app — os únicos arquivos que ele apaga de vez (SEG-10).
-const TMP_PREFIX: &str = ".syncly-tmp-";
+pub(crate) const TMP_PREFIX: &str = ".syncly-tmp-";
 
 /// Parâmetros de uma execução compactada, vindos de `run_job`.
 pub(crate) struct ArchiveExec<'a> {
@@ -72,7 +72,7 @@ impl Prepared {
 }
 
 /// Arquivo temporário apagado ao sair do escopo, com sucesso ou erro.
-struct TempFile(PathBuf);
+pub(crate) struct TempFile(pub PathBuf);
 
 impl Drop for TempFile {
     fn drop(&mut self) {
@@ -413,7 +413,7 @@ impl Service {
 
     /// Pasta dos temporários da tarefa. Sobras de uma execução interrompida são
     /// apagadas — a trava da tarefa (RN-90) garante que nenhuma outra as usa.
-    fn staging_dir(&self, job_id: Uuid) -> ServiceResult<PathBuf> {
+    pub(crate) fn staging_dir(&self, job_id: Uuid) -> ServiceResult<PathBuf> {
         let dir = self.paths.data_dir.join("tmp").join(job_id.to_string());
         ensure_private_dir(&dir)?;
         if let Ok(items) = std::fs::read_dir(&dir) {
@@ -432,7 +432,7 @@ fn lock(state: &Mutex<StateDb>) -> MutexGuard<'_, StateDb> {
     state.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-fn failed(e: impl Into<ServiceError>) -> (RunStatus, ServiceError) {
+pub(crate) fn failed(e: impl Into<ServiceError>) -> (RunStatus, ServiceError) {
     (RunStatus::Failed, e.into())
 }
 
@@ -444,20 +444,32 @@ async fn compress(
     cancel: &Arc<AtomicBool>,
     progress: &(dyn Fn(&Progress) + Send + Sync),
 ) -> ServiceResult<CreateReport> {
-    let (tx, mut rx) = tokio::sync::watch::channel(ArchiveProgress::default());
     let scan = p.scan.clone();
     let output = output.to_path_buf();
     let cancel = cancel.clone();
-    let mut task = tokio::task::spawn_blocking(move || {
+    with_progress(progress, move |report| {
         archive::create(&CreateRequest {
             scan: &scan,
             output: &output,
             format,
             level: None,
             cancel: &cancel,
-            progress: &move |a: &ArchiveProgress| {
-                tx.send_replace(a.clone());
-            },
+            progress: report,
+        })
+    })
+    .await
+}
+
+/// Roda uma compactação/extração numa thread à parte (E/S de disco pesada) e repassa o
+/// progresso dela como [`Progress`] — o mesmo evento das execuções de tarefa.
+pub(crate) async fn with_progress<T: Send + 'static>(
+    progress: &(dyn Fn(&Progress) + Send + Sync),
+    work: impl FnOnce(&(dyn Fn(&ArchiveProgress) + Send + Sync)) -> CoreResult<T> + Send + 'static,
+) -> ServiceResult<T> {
+    let (tx, mut rx) = tokio::sync::watch::channel(ArchiveProgress::default());
+    let mut task = tokio::task::spawn_blocking(move || {
+        work(&move |a: &ArchiveProgress| {
+            tx.send_replace(a.clone());
         })
     });
     let result = loop {
@@ -480,7 +492,10 @@ async fn compress(
 
 /// A versão registrada continua no destino, com o mesmo nome e tamanho?
 /// Uma versão renomeada ou substituída fora do app deixa de ser dele.
-async fn is_intact(provider: &dyn StorageProvider, v: &ArchiveRecord) -> ServiceResult<bool> {
+pub(crate) async fn is_intact(
+    provider: &dyn StorageProvider,
+    v: &ArchiveRecord,
+) -> ServiceResult<bool> {
     match provider.get(&v.remote_id).await {
         Ok(Some(e)) => Ok(e.kind == EntryKind::File
             && e.name == v.name
@@ -527,20 +542,20 @@ fn expired<'a>(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::dto::{JobDraft, SyncDraft};
     use syncly_core::domain::{Delivery, RunTrigger, SyncMode};
 
-    struct Fixture {
-        _tmp: tempfile::TempDir,
-        service: Service,
-        source: PathBuf,
-        backups: PathBuf,
-        job: Uuid,
+    pub(crate) struct Fixture {
+        pub _tmp: tempfile::TempDir,
+        pub service: Service,
+        pub source: PathBuf,
+        pub backups: PathBuf,
+        pub job: Uuid,
     }
 
-    fn fixture(retention: Retention) -> Fixture {
+    pub(crate) fn fixture(retention: Retention) -> Fixture {
         let tmp = tempfile::tempdir().unwrap();
         let service = crate::test_support::service(&tmp.path().join("app"), "http://127.0.0.1:9");
         let source = tmp.path().join("Mundo");
@@ -579,14 +594,14 @@ mod tests {
         }
     }
 
-    fn options(confirm: bool) -> RunOptions {
+    pub(crate) fn options(confirm: bool) -> RunOptions {
         RunOptions {
             confirm,
             trigger: RunTrigger::Manual,
         }
     }
 
-    fn names(dir: &Path) -> Vec<String> {
+    pub(crate) fn names(dir: &Path) -> Vec<String> {
         let mut out: Vec<String> = std::fs::read_dir(dir)
             .unwrap()
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())

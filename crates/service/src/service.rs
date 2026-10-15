@@ -44,7 +44,7 @@ pub struct Service {
     pub(crate) google: GoogleBackend,
     pub(crate) http: OnceLock<HttpClient>,
     /// Execuções em andamento neste processo → sinal de cancelamento.
-    running: Mutex<HashMap<Uuid, Arc<AtomicBool>>>,
+    pub(crate) running: Mutex<HashMap<Uuid, Arc<AtomicBool>>>,
     /// Compactação/descompactação em andamento (uma por vez).
     pub(crate) archive_op: Mutex<Option<Arc<AtomicBool>>>,
 }
@@ -84,7 +84,7 @@ pub(crate) struct RunningGuard<'a> {
 }
 
 impl<'a> RunningGuard<'a> {
-    fn register(
+    pub(crate) fn register(
         map: &'a Mutex<HashMap<Uuid, Arc<AtomicBool>>>,
         id: Uuid,
         flag: Arc<AtomicBool>,

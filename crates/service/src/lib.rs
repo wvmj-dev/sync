@@ -7,6 +7,7 @@ pub mod dto;
 mod error;
 mod google;
 pub mod logging;
+mod restore;
 pub mod secrets;
 mod service;
 #[cfg(test)]

@@ -170,6 +170,21 @@ pub struct ArchiveRun {
     pub versions: usize,
 }
 
+/// Versão enviada por uma tarefa compactada (RN-50), para listar e restaurar.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionItem {
+    pub id: Uuid,
+    pub name: String,
+    pub size: u64,
+    pub created_at: DateTime<Utc>,
+    pub account_id: Uuid,
+    /// `None` se a conta foi removida.
+    pub account_label: Option<String>,
+    /// Pasta no destino, relativa à raiz do app.
+    pub path: String,
+}
+
 /// Item listado numa conta (arquivo ou pasta dentro de `Syncly/`).
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

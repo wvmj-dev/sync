@@ -72,6 +72,19 @@ export interface JobSummary {
   lastRun: RunSummary | null;
 }
 
+/** Versão enviada por uma tarefa compactada (RN-50). */
+export interface VersionItem {
+  id: string;
+  name: string;
+  size: number;
+  createdAt: string;
+  accountId: string;
+  /** `null` se a conta foi removida. */
+  accountLabel: string | null;
+  /** Pasta no destino, relativa à raiz do app. */
+  path: string;
+}
+
 export interface RemoteItem {
   name: string;
   /** Relativo à pasta raiz do app (Syncly/). */

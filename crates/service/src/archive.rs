@@ -24,7 +24,7 @@ use crate::error::{ServiceError, ServiceResult};
 use crate::service::Service;
 
 const MAX_INPUTS: usize = 32;
-const MAX_REPORTED: usize = 50;
+pub(crate) const MAX_REPORTED: usize = 50;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]

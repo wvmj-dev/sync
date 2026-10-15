@@ -120,13 +120,16 @@ uma transferência só, em vez de milhares.
 As guardas da seção 6 valem aqui também: primeira execução com confirmação (RN-36), fonte
 ausente ou esvaziada (RN-40, RN-41), agendada nunca confirma sozinha (RN-43).
 
-### Restauração *(planejado — fase 2c)*
+### Restauração
 
-Hoje dá para restaurar à mão: baixar a versão (tela **Arquivos**) e descompactar (tela
-**Compactar**, RN-65 e RN-66).
+Tela **Tarefas → Versões → Restaurar…** ou `syncly restore <tarefa> --to <pasta>`.
 
-- **RN-57** — Restauração vai, por padrão, para uma **pasta nova** (`restauracao-<tarefa>-<data>/`). Restaurar por cima exige confirmação, e os arquivos substituídos vão para a lixeira do sistema.
-- **RN-58** — Antes de extrair, o sha256 do arquivo é verificado. Entradas com caminho absoluto, `..`, links para fora do destino ou arquivos especiais são rejeitadas.
+- **RN-57** — Restaurar uma versão a descompacta sempre numa **pasta nova** `<nome da versão>/` dentro da pasta escolhida (`(2)`, `(3)`… se já existir; RN-65) — nunca por cima de arquivos existentes. A pasta escolhida não pode ficar dentro de uma fonte da tarefa (a próxima versão levaria a restauração junto) nem das pastas do app. A restauração conta como execução da tarefa: usa a trava dela (RN-90) — a retenção não remove a versão no meio do caminho — e vai para o histórico. A rotina de recebimento (RN-107) segue a mesma regra.
+- **RN-58** — Antes de descompactar, a versão é conferida: precisa estar intacta no destino (nome e tamanho registrados, RN-55) e o arquivo baixado precisa ter o **mesmo checksum registrado no envio** — o que também pega uma versão trocada por outra de mesmo nome e tamanho. Se não conferir, nada é descompactado. Mesmo conferido, o conteúdo é tratado como não confiável (RN-66).
+
+### Rotina de recebimento *(planejado — fase 2d)*
+
+- **RN-107** — Uma tarefa poderá **receber** em vez de enviar: busca a versão mais recente de uma tarefa compactada — só arquivos que o Syncly enviou (escopo `drive.file`, SEG-03), inclusive a partir de outro computador com o mesmo projeto do Google Cloud (a confirmar na implementação) — e a descompacta no computador, **sempre numa pasta nova a cada recebimento** (RN-57), nunca por cima. Se a versão mais recente já foi recebida, nada é feito.
 
 ## 8. Compactação e descompactação
 
@@ -137,7 +140,7 @@ Tela **Compactar** e `syncly archive create|extract`.
 - **RN-60** — Ação avulsa "Compactar": até 32 pastas/arquivos → `.zip` (padrão na interface; abre em qualquer sistema), `.tar.gz` (padrão no Linux), `.tar.zst` (mais rápido e menor) ou `.tar` (sem compressão). Tarefas que enviam compactado (RN-50) usam o formato escolhido nelas. Nome padrão: o da única entrada, ou `arquivos`.
 - **RN-61** — Níveis padrão: zstd 3, gzip 6, deflate 6. No `.zip`, arquivos já comprimidos (jpg, png, mp4, zip, gz, 7z…) são armazenados sem recompressão. O bit de execução é preservado.
 - **RN-62** — O arquivo de saída não pode estar dentro das entradas e **nunca sobrescreve** um existente (`nome (2).zip`, `nome (2).tar.gz`…). É escrito num temporário e só ganha o nome final ao terminar — erro ou cancelamento não deixam arquivo pela metade.
-- **RN-63** — Criptografia só para `.tar.zst` (gera `.tar.zst.age`) — fase 2d.
+- **RN-63** — Criptografia só para `.tar.zst` (gera `.tar.zst.age`) — fase 2e.
 - **RN-64** — Valem os filtros da sincronização: lixo e temporários (RN-21) ficam de fora; **arquivos sensíveis** (RN-22) só entram se marcados; `.syncignore` é respeitado; links e arquivos especiais não entram; o que não pôde ser lido vira aviso. Se nada sobrar, nada é criado.
 
 ### Descompactar
@@ -146,7 +149,7 @@ Tela **Compactar** e `syncly archive create|extract`.
 - **RN-66** — Arquivos compactados vindos de fora são **entrada não confiável**. Entradas com caminho absoluto, `..`, nomes inválidos, links (simbólicos ou não) e arquivos especiais são **ignoradas** e listadas no resultado. Entradas repetidas não sobrescrevem a primeira. Só o bit de execução é aplicado — setuid/setgid nunca.
 - **RN-67** — Proteção contra "bomba de compressão" e disco cheio: compactar ou descompactar nunca deixa menos de **1 GiB** livre no disco; se fosse deixar, a operação para e nada fica pela metade.
 
-## 9. Criptografia *(planejado — fase 2d)*
+## 9. Criptografia *(planejado — fase 2e)*
 
 - **RN-70** — Opcional, por tarefa, aplicada a versões (seção 7) e compactações. A sincronização envia arquivos como estão (para serem visualizáveis no Drive).
 - **RN-71** — Formato `age` com chave X25519. A chave pública fica no `config.toml`; a privada, no keyring.
@@ -193,3 +196,5 @@ Enviar ou baixar um arquivo específico, fora de uma tarefa (tela **Arquivos** e
 - **RN-104** — Envio cria as pastas que faltarem dentro de `Syncly/`, mas **nunca sobrescreve nem duplica**: se já existir um item com o mesmo nome na pasta, o envio é recusado.
 - **RN-105** — Os filtros de arquivos sensíveis e temporários (RN-21, RN-22) valem também para o envio avulso.
 - **RN-106** — Download **nunca sobrescreve**: se o nome já existir na pasta local, grava como `nome (2).ext`, `nome (3).ext`… Todo envio e download é verificado por checksum (RN-37) e o download é gravado de forma atômica. Documentos nativos do Google (sem conteúdo binário) não são baixados.
+- **RN-108** — *(planejado — fase 2d)* **Baixar e descompactar**: um `.zip`/`.tar.*` da conta vai direto para uma pasta nova no computador, com as proteções de RN-65 a RN-67.
+- **RN-109** — *(planejado — fase 2d)* **Enviar pasta compactada**: uma pasta escolhida é compactada (RN-60 a RN-64) e enviada como um único arquivo, sem criar tarefa; vale RN-104 (nunca sobrescreve).

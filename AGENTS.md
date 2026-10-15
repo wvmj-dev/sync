@@ -8,9 +8,10 @@ detalhado fica em [`.agents/`](.agents/README.md) e deve ser lido **sob demanda*
 
 App desktop para sincronizar e fazer backup de pastas com o Google Drive (outros
 provedores depois). Tauri 2 + Rust (núcleo) + Vue 3/TypeScript (UI) + CLI `syncly`.
-Fases concluídas: **0, 1a, 1b, 2a e 2b** — sincronização (Drive e pasta local), transferências avulsas,
-compactação e envio compactado com versões (backup) funcionando. Próximas: **2c** (restaurar versão)
-e **1c** (status). Roadmap em `docs/ARQUITETURA.md` §13.
+Fases concluídas: **0, 1a, 1b, 2a, 2b e 2c** — sincronização (Drive e pasta local), transferências
+avulsas, compactação, envio compactado com versões (backup) e restauração funcionando. Próximas:
+**2d** (receber: rotina de recebimento, baixar e descompactar) e **1c** (status). Roadmap em
+`docs/ARQUITETURA.md` §13.
 
 Fonte da verdade — leia antes de mudar comportamento:
 
@@ -22,16 +23,17 @@ Fonte da verdade — leia antes de mudar comportamento:
 
 Não presuma que algo existe só porque está nos docs — os docs descrevem o projeto completo.
 
-| Já funciona (fases 0, 1a, 1b, 2a e 2b) | Ainda **não** existe |
+| Já funciona (fases 0, 1a, 1b, 2a, 2b e 2c) | Ainda **não** existe |
 |---|---|
 | Domínio e validações; **executor** (`sync/executor.rs`) com progresso, cancelamento e histórico | Paralelizar a listagem remota (hoje uma pasta por vez) |
 | Varredura local com filtros, `.syncignore`, bloqueios e exclusões | Status / última modificação (RN-100 a RN-103) |
-| Planejador, guardas, política de retry, retenção (funções puras) | Restaurar versão, criptografia, manifesto |
+| Planejador, guardas, política de retry, retenção (funções puras) | Rotina de recebimento, baixar e descompactar, enviar pasta compactada (RN-107 a RN-109) |
 | Estado em SQLite, config TOML, trava por tarefa, logs em arquivo | Agendamento (systemd), notificações, bandeja |
 | `LocalProvider` e `GDriveProvider` (Drive: OAuth PKCE, keyring, limitador, retry, envio retomável) | Changes API, download/bidirecional |
 | **Prévia** de sincronização (CLI e UI); enviar/listar/baixar arquivos avulsos (`syncly remote`, tela Arquivos) | Testes de frontend |
 | Compactar/descompactar zip e tar (`core/src/archive/`, `syncly archive`, tela Compactar) | |
-| **Envio compactado** (`Delivery::Archive`, `service/src/delivery.rs`): versões com data, retenção, pula se nada mudou | |
+| **Envio compactado** (`Delivery::Archive`, `service/src/delivery.rs`): versões com data, retenção, pula se nada mudou | Criptografia, manifesto |
+| **Restaurar versão** (`service/src/restore.rs`, `syncly versions`/`restore`, tela Tarefas → Versões) | |
 
 `docs/REGRAS_DE_NEGOCIO.md` marca como *(planejado)* as seções e regras que ainda não existem.
 

@@ -21,6 +21,8 @@
     "allow-download-file",
     "allow-run-job",
     "allow-cancel-run",
+    "allow-list-versions",
+    "allow-restore-version",
     "allow-compress-paths",
     "allow-extract-archive",
     "allow-cancel-archive"

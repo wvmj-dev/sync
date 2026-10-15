@@ -1,9 +1,17 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
-import { ApiError, api, confirmDanger, errorMessage, onRunProgress } from "../api";
-import type { JobSummary, PlanPreview as Preview, RunProgress, RunReport } from "../api/types";
+import { ApiError, api, confirmDanger, errorMessage, onRunProgress, pickFolder } from "../api";
+import type {
+  ExtractResult,
+  JobSummary,
+  PlanPreview as Preview,
+  RunProgress,
+  RunReport,
+  VersionItem,
+} from "../api/types";
 import { deliveryLabel, formatBytes, formatDate, runStatusLabel } from "../utils/format";
 import PlanPreview from "./PlanPreview.vue";
+import VersionList from "./VersionList.vue";
 
 const props = defineProps<{ job: JobSummary }>();
 const emit = defineEmits<{ edit: []; remove: []; changed: [] }>();
@@ -13,8 +21,17 @@ type PreviewState =
   | { status: "ready"; data: Preview }
   | { status: "error"; message: string };
 
+type VersionsState =
+  | { status: "loading" }
+  | { status: "ready"; data: VersionItem[] }
+  | { status: "error"; message: string };
+
 const preview = ref<PreviewState | null>(null);
+const versions = ref<VersionsState | null>(null);
 const running = ref(false);
+/** O que está rodando: a execução da tarefa ou uma restauração. */
+const activity = ref<"run" | "restore">("run");
+const restored = ref<ExtractResult | null>(null);
 const progress = ref<RunProgress | null>(null);
 const result = ref<RunReport | null>(null);
 const runError = ref<string | null>(null);
@@ -34,6 +51,7 @@ onMounted(async () => {
 onUnmounted(() => stopListening?.());
 
 const canRun = computed(() => !!props.job.sync && props.job.enabled && !running.value);
+const isArchive = computed(() => props.job.sync?.delivery.kind === "archive");
 const percent = computed(() => {
   const p = progress.value;
   if (!p) return 0;
@@ -62,12 +80,47 @@ async function loadPreview() {
   }
 }
 
-/** RN-36/RN-42: se o plano exigir confirmação, pergunta antes de executar de verdade. */
-async function execute() {
+async function loadVersions() {
+  versions.value = { status: "loading" };
+  try {
+    versions.value = { status: "ready", data: await api.listVersions(props.job.id) };
+  } catch (e) {
+    versions.value = { status: "error", message: errorMessage(e) };
+  }
+}
+
+function toggleVersions() {
+  if (versions.value) versions.value = null;
+  else void loadVersions();
+}
+
+function startActivity(kind: "run" | "restore") {
+  activity.value = kind;
   running.value = true;
   progress.value = null;
   result.value = null;
+  restored.value = null;
   runError.value = null;
+}
+
+/** RN-57: sempre numa pasta nova dentro da pasta escolhida. */
+async function restore(version: VersionItem) {
+  const dir = await pickFolder(`Restaurar ${version.name} em…`);
+  if (!dir) return;
+  startActivity("restore");
+  try {
+    restored.value = await api.restoreVersion(props.job.id, version.id, dir);
+  } catch (e) {
+    runError.value = errorMessage(e);
+  } finally {
+    running.value = false;
+    emit("changed");
+  }
+}
+
+/** RN-36/RN-42: se o plano exigir confirmação, pergunta antes de executar de verdade. */
+async function execute() {
+  startActivity("run");
   let confirm = false;
   try {
     for (;;) {
@@ -92,6 +145,7 @@ async function execute() {
   } finally {
     running.value = false;
     preview.value = null;
+    if (versions.value) void loadVersions();
     emit("changed");
   }
 }
@@ -127,6 +181,15 @@ async function cancel() {
         <button class="btn btn-primary" type="button" :disabled="!canRun" @click="execute">
           Executar
         </button>
+        <button
+          v-if="isArchive"
+          class="btn"
+          type="button"
+          :aria-expanded="!!versions"
+          @click="toggleVersions"
+        >
+          Versões
+        </button>
         <button class="btn btn-ghost" type="button" :disabled="running" @click="emit('edit')">
           Editar
         </button>
@@ -149,7 +212,7 @@ async function cancel() {
 
     <section v-if="running" class="run" aria-live="polite">
       <div class="run-head">
-        <strong>Executando…</strong>
+        <strong>{{ activity === "restore" ? "Restaurando…" : "Executando…" }}</strong>
         <button class="btn btn-ghost" type="button" @click="cancel">Cancelar</button>
       </div>
       <div class="progress" role="progressbar" :aria-valuenow="Math.round(percent)">
@@ -157,12 +220,15 @@ async function cancel() {
       </div>
       <p v-if="progress" class="muted small">
         {{ progress.done }} de {{ progress.total }} itens ·
-        {{ formatBytes(progress.bytesDone) }} de {{ formatBytes(progress.bytesTotal) }}
+        {{ formatBytes(progress.bytesDone)
+        }}<template v-if="progress.bytesTotal"> de {{ formatBytes(progress.bytesTotal) }}</template>
       </p>
       <p v-if="progress?.current" class="muted small run-current">
         <code>{{ progress.current }}</code>
       </p>
-      <p v-else class="muted small">Varrendo arquivos e calculando o plano…</p>
+      <p v-else class="muted small">
+        {{ activity === "restore" ? "Preparando…" : "Varrendo arquivos e calculando o plano…" }}
+      </p>
     </section>
 
     <section v-if="result" class="run">
@@ -202,10 +268,40 @@ async function cancel() {
         </ul>
       </details>
     </section>
+    <section v-if="restored" class="run">
+      <div class="banner" :class="restored.skippedCount ? 'banner-warning' : 'banner-ok'">
+        <div>
+          <strong>Restaurado</strong> em <code>{{ restored.dest }}</code> —
+          {{ restored.files }} arquivo(s), {{ restored.folders }} pasta(s)
+          ({{ formatBytes(restored.bytes) }}).
+        </div>
+        <button class="btn btn-ghost" type="button" @click="restored = null">Fechar</button>
+      </div>
+      <details v-if="restored.skippedCount">
+        <summary>{{ restored.skippedCount }} entrada(s) ignorada(s) por segurança</summary>
+        <ul class="small">
+          <li v-for="e in restored.skipped" :key="e.name">
+            <code>{{ e.name }}</code>: {{ e.reason }}
+          </li>
+        </ul>
+      </details>
+    </section>
     <div v-if="runError" class="banner banner-danger">
       <span>{{ runError }}</span>
       <button class="btn btn-ghost" type="button" @click="runError = null">Fechar</button>
     </div>
+
+    <section v-if="versions" class="run">
+      <h3>Versões</h3>
+      <p v-if="versions.status === 'loading'" class="muted">Carregando versões…</p>
+      <VersionList
+        v-else-if="versions.status === 'ready'"
+        :versions="versions.data"
+        :busy="running"
+        @restore="restore"
+      />
+      <div v-else class="banner banner-danger">{{ versions.message }}</div>
+    </section>
 
     <template v-if="!running">
       <p v-if="preview?.status === 'loading'" class="muted">Calculando prévia…</p>

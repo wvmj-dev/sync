@@ -16,6 +16,7 @@ import type {
   RemoteItem,
   RunProgress,
   RunReport,
+  VersionItem,
 } from "./types";
 
 export class ApiError extends Error {
@@ -59,6 +60,11 @@ export const api = {
   /** Sem `confirm`, pode falhar com o código `needs_confirmation` (RN-36, RN-42). */
   runJob: (id: string, confirm: boolean) => call<RunReport>("run_job", { id, confirm }),
   cancelRun: (id: string) => call<boolean>("cancel_run", { id }),
+  listVersions: (jobId: string) => call<VersionItem[]>("list_versions", { jobId }),
+  /** Baixa, confere e descompacta numa pasta nova dentro de `destDir` (RN-57, RN-58).
+   * Progresso pelo evento `run-progress`; cancela com `cancelRun(jobId)`. */
+  restoreVersion: (jobId: string, versionId: string, destDir: string) =>
+    call<ExtractResult>("restore_version", { jobId, versionId, destDir }),
   compress: (request: CompressRequest) => call<CompressResult>("compress_paths", { request }),
   extract: (archive: string, destDir: string) =>
     call<ExtractResult>("extract_archive", { archive, destDir }),

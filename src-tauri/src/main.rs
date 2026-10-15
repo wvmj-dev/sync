@@ -44,6 +44,8 @@ fn main() {
             commands::download_file,
             commands::run_job,
             commands::cancel_run,
+            commands::list_versions,
+            commands::restore_version,
             commands::compress_paths,
             commands::extract_archive,
             commands::cancel_archive,

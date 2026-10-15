@@ -10,8 +10,8 @@ use syncly_core::sync::executor::ExecutionReport;
 use syncly_core::sync::guard::GuardVerdict;
 use syncly_service::dto::{ArchivePreview, PlanPreview, RemoteItem, RunReport, human_bytes};
 use syncly_service::{
-    AppPaths, ArchiveFormat, ArchiveProgress, CompressRequest, Progress, RunOptions, RunTrigger,
-    Service, ServiceError, logging,
+    AppPaths, ArchiveFormat, ArchiveProgress, CompressRequest, ExtractResult, Progress, RunOptions,
+    RunTrigger, Service, ServiceError, logging,
 };
 
 #[derive(Parser)]
@@ -47,6 +47,22 @@ enum Command {
         /// Usado pelos timers do systemd (RN-43: nunca confirma sozinho).
         #[arg(long, hide = true)]
         scheduled: bool,
+    },
+    /// Lista as versões enviadas por uma tarefa compactada.
+    Versions {
+        /// Nome ou ID da tarefa.
+        job: String,
+    },
+    /// Baixa uma versão, confere e descompacta numa pasta nova (RN-57, RN-58).
+    Restore {
+        /// Nome ou ID da tarefa.
+        job: String,
+        /// Pasta onde a pasta da versão será criada.
+        #[arg(long)]
+        to: PathBuf,
+        /// Nome (ou o começo dele) ou ID da versão. Padrão: a mais recente.
+        #[arg(long)]
+        version: Option<String>,
     },
     /// Compactar e descompactar (zip, tar, tar.gz, tar.zst).
     Archive {
@@ -249,6 +265,65 @@ async fn run(cli: Cli) -> Result<ExitCode, syncly_service::ServiceError> {
                 Err(e) => Err(e),
             };
         }
+        Command::Versions { job } => {
+            let id = service.find_job_id(&job)?;
+            let versions = service.list_versions(id)?;
+            if versions.is_empty() {
+                println!("Nenhuma versão enviada por esta tarefa.");
+            }
+            for v in versions {
+                println!(
+                    "{}  {}  {:>10}  {}:{}/{}",
+                    v.id,
+                    v.created_at
+                        .with_timezone(&chrono::Local)
+                        .format("%d/%m/%Y %H:%M"),
+                    human_bytes(v.size),
+                    v.account_label.as_deref().unwrap_or("conta removida"),
+                    v.path,
+                    v.name
+                );
+            }
+        }
+        Command::Restore { job, to, version } => {
+            let id = service.find_job_id(&job)?;
+            let versions = service.list_versions(id)?;
+            let chosen = match version.as_deref() {
+                None => versions.first(),
+                Some(key) => {
+                    let found: Vec<_> = versions
+                        .iter()
+                        .filter(|v| v.id.to_string() == key || v.name.starts_with(key))
+                        .collect();
+                    if found.len() > 1 {
+                        return Err(ServiceError::Invalid(format!(
+                            "'{key}' combina com {} versões — use mais do nome ou o ID \
+                             (syncly versions {job:?})",
+                            found.len()
+                        )));
+                    }
+                    found.first().copied()
+                }
+            }
+            .ok_or_else(|| {
+                ServiceError::Invalid(format!(
+                    "versão não encontrada — veja `syncly versions {job:?}`"
+                ))
+            })?;
+            eprintln!("Restaurando {}…", chosen.name);
+            let interactive = std::io::stderr().is_terminal();
+            let result = service
+                .restore_version(id, chosen.id, &absolute(&to)?, |p| {
+                    if interactive {
+                        print_progress(p);
+                    }
+                })
+                .await;
+            if interactive {
+                eprintln!();
+            }
+            print_extracted("Restaurado em", &result?);
+        }
         Command::Archive { action } => {
             let interactive = std::io::stderr().is_terminal();
             let show = move |p: &ArchiveProgress| {
@@ -298,24 +373,7 @@ async fn run(cli: Cli) -> Result<ExitCode, syncly_service::ServiceError> {
                     if interactive {
                         eprintln!();
                     }
-                    let r = result?;
-                    println!(
-                        "Extraído em: {}\n  {} arquivo(s), {} pasta(s), {} em {:.1} s",
-                        r.dest,
-                        r.files,
-                        r.folders,
-                        human_bytes(r.bytes),
-                        r.duration_ms as f64 / 1000.0
-                    );
-                    if r.skipped_count > 0 {
-                        println!(
-                            "  {} entrada(s) ignorada(s) por segurança:",
-                            r.skipped_count
-                        );
-                        for s in &r.skipped {
-                            println!("    {}: {}", s.name, s.reason);
-                        }
-                    }
+                    print_extracted("Extraído em", &result?);
                 }
             }
         }
@@ -454,6 +512,26 @@ fn print_counts(e: &ExecutionReport) {
             "  {} arquivo(s) mudaram durante o envio e vão de novo na próxima execução",
             e.unstable
         );
+    }
+}
+
+fn print_extracted(label: &str, r: &ExtractResult) {
+    println!(
+        "{label}: {}\n  {} arquivo(s), {} pasta(s), {} em {:.1} s",
+        r.dest,
+        r.files,
+        r.folders,
+        human_bytes(r.bytes),
+        r.duration_ms as f64 / 1000.0
+    );
+    if r.skipped_count > 0 {
+        println!(
+            "  {} entrada(s) ignorada(s) por segurança:",
+            r.skipped_count
+        );
+        for s in &r.skipped {
+            println!("    {}: {}", s.name, s.reason);
+        }
     }
 }
 

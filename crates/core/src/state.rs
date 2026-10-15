@@ -117,6 +117,29 @@ fn parse_ts(s: &str) -> rusqlite::Result<DateTime<Utc>> {
         })
 }
 
+const ARCHIVE_COLUMNS: &str = "id, job_id, account_id, dest_path, remote_id, name, format, size, \
+     hash, fingerprint, created_at";
+
+fn archive_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<ArchiveRecord> {
+    let id: String = r.get(0)?;
+    let job: String = r.get(1)?;
+    let account: String = r.get(2)?;
+    let created: String = r.get(10)?;
+    Ok(ArchiveRecord {
+        id: id.parse().map_err(|_| bad_value("id", &id))?,
+        job_id: job.parse().map_err(|_| bad_value("tarefa", &job))?,
+        account_id: account.parse().map_err(|_| bad_value("conta", &account))?,
+        dest_path: r.get(3)?,
+        remote_id: r.get(4)?,
+        name: r.get(5)?,
+        format: r.get(6)?,
+        size: u64::try_from(r.get::<_, i64>(7)?).unwrap_or(0),
+        hash: r.get(8)?,
+        fingerprint: r.get(9)?,
+        created_at: parse_ts(&created)?,
+    })
+}
+
 fn bad_value(what: &str, value: &str) -> rusqlite::Error {
     rusqlite::Error::FromSqlConversionFailure(
         0,
@@ -347,33 +370,24 @@ impl StateDb {
         account_id: Uuid,
         dest_path: &str,
     ) -> CoreResult<Vec<ArchiveRecord>> {
-        let mut stmt = self.conn.prepare_cached(
-            "SELECT id, job_id, account_id, dest_path, remote_id, name, format, size, hash, fingerprint, created_at
-             FROM archives WHERE job_id = ?1 AND account_id = ?2 AND dest_path = ?3
-             ORDER BY created_at DESC",
-        )?;
+        let mut stmt = self.conn.prepare_cached(&format!(
+            "SELECT {ARCHIVE_COLUMNS} FROM archives
+             WHERE job_id = ?1 AND account_id = ?2 AND dest_path = ?3
+             ORDER BY created_at DESC"
+        ))?;
         let rows = stmt.query_map(
             params![job_id.to_string(), account_id.to_string(), dest_path],
-            |r| {
-                let id: String = r.get(0)?;
-                let job: String = r.get(1)?;
-                let account: String = r.get(2)?;
-                let created: String = r.get(10)?;
-                Ok(ArchiveRecord {
-                    id: id.parse().map_err(|_| bad_value("id", &id))?,
-                    job_id: job.parse().map_err(|_| bad_value("tarefa", &job))?,
-                    account_id: account.parse().map_err(|_| bad_value("conta", &account))?,
-                    dest_path: r.get(3)?,
-                    remote_id: r.get(4)?,
-                    name: r.get(5)?,
-                    format: r.get(6)?,
-                    size: u64::try_from(r.get::<_, i64>(7)?).unwrap_or(0),
-                    hash: r.get(8)?,
-                    fingerprint: r.get(9)?,
-                    created_at: parse_ts(&created)?,
-                })
-            },
+            archive_row,
         )?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Todas as versões de uma tarefa, em qualquer destino, da mais nova para a mais antiga.
+    pub fn list_job_archives(&self, job_id: Uuid) -> CoreResult<Vec<ArchiveRecord>> {
+        let mut stmt = self.conn.prepare_cached(&format!(
+            "SELECT {ARCHIVE_COLUMNS} FROM archives WHERE job_id = ?1 ORDER BY created_at DESC"
+        ))?;
+        let rows = stmt.query_map(params![job_id.to_string()], archive_row)?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
@@ -498,6 +512,8 @@ mod tests {
         assert_eq!(listed.len(), 2);
         // Outro destino não se mistura.
         assert!(db.list_archives(job, account, "Outra").unwrap().is_empty());
+        assert_eq!(db.list_job_archives(job).unwrap().len(), 2);
+        assert!(db.list_job_archives(Uuid::new_v4()).unwrap().is_empty());
         db.delete_archive(old.id).unwrap();
         assert_eq!(db.list_archives(job, account, "Backups").unwrap().len(), 1);
     }

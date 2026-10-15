@@ -23,8 +23,9 @@ e TAR. Tudo verificado por checksum.
 | **Compactar e descompactar** (zip, tar, tar.gz, tar.zst), protegido contra arquivos maliciosos | ✅ |
 | Logs em arquivo com rotação | ✅ |
 | Tela de status / última modificação de cada arquivo | fase 1c |
-| Restaurar uma versão (baixar e descompactar) | fase 2c (hoje: tela Arquivos + Compactar) |
-| Criptografia das versões | fase 2d |
+| **Restaurar uma versão**: baixa, confere o checksum e descompacta numa pasta nova | ✅ |
+| Receber: rotina que baixa e descompacta, "baixar e descompactar", "enviar pasta compactada" | fase 2d |
+| Criptografia das versões | fase 2e |
 | Agendamento, notificações, ícone na bandeja | fase 3 |
 | Sincronização bidirecional | fase 4 |
 | Outros provedores; macOS e Windows | fase 5 |
@@ -58,7 +59,7 @@ Para usar o Google Drive, configure antes o seu projeto no Google Cloud:
 |---|---|
 | **Visão geral** | Primeiros passos, tarefas e última execução, onde ficam config, dados e logs. |
 | **Contas** | **Conectar Google Drive** (abre o navegador; clique em *Continuar* no aviso "O Google não verificou este app" — é o seu próprio app) e adicionar **pastas locais** (HD externo, NAS). |
-| **Tarefas** | Criar uma tarefa (fontes + destino + como enviar), **Pré-visualizar** e **Executar**. Na primeira execução o app pede confirmação. |
+| **Tarefas** | Criar uma tarefa (fontes + destino + como enviar), **Pré-visualizar** e **Executar**. Na primeira execução o app pede confirmação. Em tarefas compactadas, **Versões → Restaurar…** descompacta uma versão numa pasta nova. |
 | **Arquivos** | Navegar na pasta `Syncly/` de uma conta, **enviar** e **baixar** arquivos avulsos. |
 | **Compactar** | Compactar pastas/arquivos em ZIP, TAR.GZ, TAR.ZST ou TAR, e descompactar numa pasta nova. |
 
@@ -95,6 +96,9 @@ cargo run -p syncly-cli -- jobs
 cargo run -p syncly-cli -- preview Documentos         # nome ou ID da tarefa
 cargo run -p syncly-cli -- run Documentos --confirm   # executa (1ª vez exige --confirm)
 cargo run -p syncly-cli -- jobs                       # mostra o tipo: envio, espelho ou compactado
+cargo run -p syncly-cli -- versions Mundo             # versões de uma tarefa compactada
+cargo run -p syncly-cli -- restore Mundo --to ~/Restaurados   # a mais recente, numa pasta nova
+cargo run -p syncly-cli -- restore Mundo --to ~/Restaurados --version Mundo_2026-10-14
 
 cargo run -p syncly-cli -- google connect             # abre o navegador para autorizar
 cargo run -p syncly-cli -- remote put ~/foto.jpg Testes          # envia para Syncly/Testes/

@@ -10,7 +10,7 @@
 | "E se o app apagar algo por engano?" | Não existe exclusão definitiva no código. Tudo vai para a lixeira do Drive (30 dias). Guardas bloqueiam exclusões em massa. O Drive ainda mantém o histórico de versões de cada arquivo. |
 | "E se encher meu armazenamento?" | O app checa a cota antes de enviar e mantém uma reserva mínima (1 GiB). Conta cheia faz o Gmail parar de receber e-mails — o app não deixa chegar lá. |
 | "E se roubarem meu token?" | Tokens ficam no keyring do sistema (cifrado pelo SO), nunca em arquivo nem na interface web do app. Você pode revogar o acesso a qualquer momento em [myaccount.google.com/connections](https://myaccount.google.com/connections). |
-| "O Google vai 'ler' meus arquivos?" | Arquivos enviados ficam legíveis no Drive — é o que permite abri-los lá. Isso vale também para as versões compactadas: compactar **não** é criptografar. A criptografia local das versões (`age`, o Google só guarda bytes cifrados) chega na fase 2d. Arquivos sensíveis (`.env`, chaves, `.ssh`) já ficam de fora por padrão. |
+| "O Google vai 'ler' meus arquivos?" | Arquivos enviados ficam legíveis no Drive — é o que permite abri-los lá. Isso vale também para as versões compactadas: compactar **não** é criptografar. A criptografia local das versões (`age`, o Google só guarda bytes cifrados) chega na fase 2e. Arquivos sensíveis (`.env`, chaves, `.ssh`) já ficam de fora por padrão. |
 | "Abrir um `.zip` baixado da internet no Syncly é seguro?" | Sim: ele é tratado como não confiável. Nada é gravado fora da pasta nova de destino, links e permissões perigosas são ignorados, e um arquivo feito para encher o disco ("bomba de compressão") é interrompido antes (SEG-26). |
 
 ## 2. O que protegemos e de quem
@@ -88,5 +88,5 @@ chaves de criptografia; integridade dos backups.
 ## 4. Fora do escopo (limites conhecidos)
 
 - Um malware rodando **como seu usuário**, com a sessão desbloqueada, pode pedir os segredos ao keyring. Nenhum app desktop resolve isso; mantenha o sistema atualizado.
-- Arquivos enviados — sincronizados ou em versões compactadas — ficam legíveis pelo Google; é o que permite visualizá-los no Drive. Para dados sensíveis, aguarde as versões criptografadas (fase 2d) ou mantenha-os fora da tarefa (por padrão, `.env`, chaves e `.ssh` já ficam).
+- Arquivos enviados — sincronizados ou em versões compactadas — ficam legíveis pelo Google; é o que permite visualizá-los no Drive. Para dados sensíveis, aguarde as versões criptografadas (fase 2e) ou mantenha-os fora da tarefa (por padrão, `.env`, chaves e `.ssh` já ficam).
 - Arquivos colocados na pasta `Syncly/` pelo site do Drive não são visíveis ao app enquanto o escopo for `drive.file` (SEG-03).

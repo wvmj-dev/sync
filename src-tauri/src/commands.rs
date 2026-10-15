@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 use syncly_service::dto::{
-    AccountSummary, AppInfo, JobDraft, JobSummary, PlanPreview, RemoteItem, RunReport,
+    AccountSummary, AppInfo, JobDraft, JobSummary, PlanPreview, RemoteItem, RunReport, VersionItem,
 };
 use syncly_service::{
     CompressRequest, CompressResult, ExtractResult, Progress, RunOptions, RunTrigger, Service,
@@ -119,6 +119,36 @@ pub async fn run_job(
         })
         .await?;
     Ok(report)
+}
+
+/// Versões enviadas por uma tarefa compactada (RN-50).
+#[tauri::command]
+pub async fn list_versions(
+    service: State<'_, Service>,
+    job_id: Uuid,
+) -> ApiResult<Vec<VersionItem>> {
+    Ok(service.list_versions(job_id)?)
+}
+
+/// Baixa, confere e descompacta uma versão numa pasta nova (RN-57, RN-58).
+/// Progresso pelo evento `run-progress`, como uma execução da tarefa.
+#[tauri::command]
+pub async fn restore_version(
+    app: AppHandle,
+    service: State<'_, Service>,
+    job_id: Uuid,
+    version_id: Uuid,
+    dest_dir: PathBuf,
+) -> ApiResult<ExtractResult> {
+    Ok(service
+        .restore_version(job_id, version_id, &dest_dir, move |p| {
+            let event = RunProgressEvent {
+                job_id,
+                progress: p.clone(),
+            };
+            let _ = app.emit("run-progress", event);
+        })
+        .await?)
 }
 
 /// Compacta (RN-60 a RN-64). Progresso pelo evento `archive-progress`.

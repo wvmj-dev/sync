@@ -15,6 +15,8 @@ const COMMANDS: &[&str] = &[
     "download_file",
     "run_job",
     "cancel_run",
+    "list_versions",
+    "restore_version",
     "compress_paths",
     "extract_archive",
     "cancel_archive",

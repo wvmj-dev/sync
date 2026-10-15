@@ -103,7 +103,7 @@ src-tauri ──► service ──► gdrive ──► core
 │   │   ├── lock.rs            # trava exclusiva por tarefa
 │   │   └── paths.rs           # diretórios XDG
 │   ├── gdrive/src/            # auth, oauth, client, provider, endpoints, query, error
-│   ├── service/src/           # service (tarefas/execução), delivery (envio compactado), google, transfers, archive, secrets, dto, logging
+│   ├── service/src/           # service (tarefas/execução), delivery (envio compactado), restore, google, transfers, archive, secrets, dto, logging
 │   └── cli/src/
 ├── src-tauri/
 │   ├── capabilities/default.json  # allowlist de comandos da janela
@@ -186,8 +186,13 @@ Quando a tarefa envia **compactado** (`Delivery::Archive`), `run_job` desvia par
 - Uma versão é **um único arquivo**: uma sequência de requisições em vez de milhares — mais
   rápido e muito mais gentil com as cotas da API.
 
-Planejado (fase 2c/2d): restaurar uma versão (baixar + descompactar numa pasta nova),
-manifesto com sha256 e criptografia `age`.
+**Restaurar** (`service/src/restore.rs`, RN-57, RN-58): com a trava da tarefa, confere que a
+versão está intacta, baixa para `tmp/`, compara o checksum com o registrado no envio e só
+então descompacta numa pasta nova — pela mesma extração defensiva da tela Compactar
+(SEG-26). Vai para o histórico como execução `restore`.
+
+Planejado: receber (fase 2d — rotina de recebimento, baixar e descompactar, enviar pasta
+compactada; RN-107 a RN-109) e criptografia `age` com manifesto (fase 2e).
 
 ## 8. Agendamento *(planejado — fase 3)*
 
@@ -211,7 +216,7 @@ manifesto com sha256 e criptografia `age`.
   `dialog:allow-ask` (confirmações nativas) e eventos.
   O navegador do login OAuth é aberto pelo Rust, não pela UI.
 - CSP restritiva (`default-src 'self'`, sem `eval`, sem recursos externos).
-- Progresso por eventos Tauri: `run-progress` (execução de tarefa, com `jobId`) e
+- Progresso por eventos Tauri: `run-progress` (execução ou restauração de tarefa, com `jobId`) e
   `archive-progress` (compactar/descompactar). Ouvidos só em `ui/src/api/`.
 - Operações longas (execução, compactação) podem ser canceladas: `cancel_run`, `cancel_archive`.
 - Erros chegam à UI como `{ code, message }` com mensagem em português, sem detalhes internos.
@@ -295,8 +300,9 @@ manifesto com sha256 e criptografia `age`.
 | 1c | Status e última modificação (RN-100 a RN-103) | |
 | 2a | Compactar e descompactar (zip, tar, tar.gz, tar.zst) | ✅ |
 | 2b | Envio compactado: versões com data, retenção, backup local/remoto | ✅ |
-| 2c | Restaurar versão (baixar e descompactar numa pasta nova; só arquivos do próprio app) | |
-| 2d | Criptografia (age) e manifesto das versões | |
+| 2c | Restaurar versão (baixar, conferir e descompactar numa pasta nova) | ✅ |
+| 2d | Receber: rotina de recebimento, baixar e descompactar, enviar pasta compactada (RN-107 a RN-109) | |
+| 2e | Criptografia (age) e manifesto das versões | |
 | 3 | Agendamento (systemd), notificações, bandeja | |
 | 4 | Changes API, download/bidirecional (requer decisão sobre escopo — ver SEG-03) | |
 | 5 | Outros provedores (OneDrive, Dropbox, S3), macOS/Windows | |
