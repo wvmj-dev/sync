@@ -7,8 +7,10 @@ pub mod dto;
 mod error;
 mod google;
 pub mod logging;
+mod os;
 mod receive;
 mod restore;
+mod schedule;
 pub mod secrets;
 mod service;
 #[cfg(test)]
@@ -18,6 +20,7 @@ mod transfers;
 pub use archive::{CompressRequest, CompressResult, ExtractResult};
 pub use error::{ServiceError, ServiceResult};
 pub use google::GoogleBackend;
+pub use os::{LinuxDesktop, OsIntegration};
 pub use service::{RunOptions, Service};
 pub use syncly_core::archive::{ArchiveFormat, ArchiveProgress};
 pub use syncly_core::domain::RunTrigger;

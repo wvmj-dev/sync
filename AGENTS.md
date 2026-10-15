@@ -8,10 +8,10 @@ detalhado fica em [`.agents/`](.agents/README.md) e deve ser lido **sob demanda*
 
 App desktop para sincronizar e fazer backup de pastas com o Google Drive (outros
 provedores depois). Tauri 2 + Rust (núcleo) + Vue 3/TypeScript (UI) + CLI `syncly`.
-Fases concluídas: **0, 1a, 1b e 2a a 2d** — sincronização (Drive e pasta local), transferências
-avulsas, compactação, envio compactado com versões (backup), restauração e recebimento
-funcionando. Próximas: **1c** (status), **3** (agendamento) e **2e** (criptografia). Roadmap em
-`docs/ARQUITETURA.md` §13.
+Fases concluídas: **0, 1a, 1b, 2a a 2d e 3a** — sincronização (Drive e pasta local),
+transferências avulsas, compactação, envio compactado com versões (backup), restauração,
+recebimento e agendamento (systemd + notificações) funcionando. Próximas: **1c** (status),
+**2e** (criptografia) e **3b** (bandeja). Roadmap em `docs/ARQUITETURA.md` §13.
 
 Fonte da verdade — leia antes de mudar comportamento:
 
@@ -23,18 +23,19 @@ Fonte da verdade — leia antes de mudar comportamento:
 
 Não presuma que algo existe só porque está nos docs — os docs descrevem o projeto completo.
 
-| Já funciona (fases 0, 1a, 1b e 2a a 2d) | Ainda **não** existe |
+| Já funciona (fases 0, 1a, 1b, 2a a 2d e 3a) | Ainda **não** existe |
 |---|---|
 | Domínio e validações; **executor** (`sync/executor.rs`) com progresso, cancelamento e histórico | Paralelizar a listagem remota (hoje uma pasta por vez) |
 | Varredura local com filtros, `.syncignore`, bloqueios e exclusões | Status / última modificação (RN-100 a RN-103) |
 | Planejador, guardas, política de retry, retenção (funções puras) | Testar o recebimento entre dois computadores (RN-107) |
-| Estado em SQLite, config TOML, trava por tarefa, logs em arquivo | Agendamento (systemd), notificações, bandeja |
+| Estado em SQLite, config TOML, trava por tarefa, logs em arquivo | Ícone na bandeja; adiar execução sem rede/keyring (RN-84) |
 | `LocalProvider` e `GDriveProvider` (Drive: OAuth PKCE, keyring, limitador, retry, envio retomável) | Changes API, download/bidirecional |
 | **Prévia** de sincronização (CLI e UI); enviar/listar/baixar arquivos avulsos (`syncly remote`, tela Arquivos) | Testes de frontend |
 | Compactar/descompactar zip e tar (`core/src/archive/`, `syncly archive`, tela Compactar) | |
 | **Envio compactado** (`Delivery::Archive`, `service/src/delivery.rs`): versões com data, retenção, pula se nada mudou | Criptografia, manifesto |
 | **Restaurar versão** (`service/src/restore.rs`, `syncly versions`/`restore`, tela Tarefas → Versões) | |
 | **Receber** (`Delivery::Receive`, `service/src/receive.rs`); avulsos "baixar e descompactar" e "enviar pasta compactada" (`transfers.rs`, `remote get --extract`/`put --compress`) | |
+| **Agendamento** (`core/src/timers.rs` puro, `service/src/schedule.rs`, `os.rs`; `syncly schedule`; modo sem janela `syncly-desktop run <id> --scheduled`) e notificações D-Bus (RN-94) | |
 
 `docs/REGRAS_DE_NEGOCIO.md` marca como *(planejado)* as seções e regras que ainda não existem.
 
@@ -66,6 +67,7 @@ cargo run -p syncly-cli -- run <tarefa> [--confirm]     # executa de verdade
 cargo run -p syncly-cli -- google connect               # abre o navegador (conta real!)
 cargo run -p syncly-cli -- remote ls|put|get …          # arquivos avulsos em Syncly/
 cargo run -p syncly-cli -- archive create|extract …     # zip, tar, tar.gz, tar.zst
+cargo run -p syncly-cli -- schedule                     # atualiza os timers (systemd real!)
 ```
 
 Testes do Drive usam `wiremock` (Google simulado) e `secrets::MemoryStore` (nunca o keyring
@@ -86,7 +88,8 @@ Violar qualquer uma é bug de segurança, mesmo que o código "funcione".
 
 1. **Sem exclusão definitiva de dados do usuário.** Remoção só via `StorageProvider::trash`
    (SEG-10, RN-44). Nada de `files.delete`/esvaziar lixeira no Drive; `remove_file` só em
-   temporários do próprio app (`.syncly-tmp-*`).
+   temporários do próprio app (`.syncly-tmp-*`) e nas units do systemd que ele gerou
+   (cabeçalho `timers::HEADER`, SEG-22).
 2. **Escopo OAuth fixo em `drive.file`** (SEG-03). Ampliar exige decisão explícita do usuário.
 3. **Segredos não saem do Rust.** Tokens, chaves e o `google-client.json` nunca vão para
    DTOs, logs, mensagens de erro ou git (SEG-04, SEG-33, SEG-52).
@@ -102,8 +105,8 @@ Violar qualquer uma é bug de segurança, mesmo que o código "funcione".
 8. **Nunca tocar item remoto fora do índice** (RN-31) — no envio compactado, fora das versões
    registradas (RN-55); itens ilegíveis ou excluídos pelos filtros nunca vão para a lixeira
    (RN-27, RN-28).
-9. **Testes nunca usam a conta Google real nem o `HOME` real**: use `tempfile`,
-   `AppPaths::in_dir` e `LocalProvider`.
+9. **Testes nunca usam a conta Google real, o `HOME` real nem o systemd real**: use
+   `tempfile`, `AppPaths::in_dir`, `LocalProvider` e `test_support::FakeOs`.
 
 ## Convenções
 

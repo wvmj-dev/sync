@@ -59,6 +59,16 @@ impl AppPaths {
         self.config_dir.join("google-client.json")
     }
 
+    /// Units do systemd do usuário (`~/.config/systemd/user`) — irmã de `config_dir`.
+    /// Em [`AppPaths::in_dir`], fica dentro do diretório de teste.
+    pub fn systemd_unit_dir(&self) -> PathBuf {
+        self.config_dir
+            .parent()
+            .unwrap_or(&self.config_dir)
+            .join("systemd")
+            .join("user")
+    }
+
     pub fn state_db(&self) -> PathBuf {
         self.data_dir.join("state.db")
     }

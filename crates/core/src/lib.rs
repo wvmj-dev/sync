@@ -19,5 +19,6 @@ pub mod provider;
 pub mod providers;
 pub mod state;
 pub mod sync;
+pub mod timers;
 
 pub use error::{CoreError, CoreResult, ValidationIssue};

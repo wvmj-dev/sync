@@ -272,6 +272,7 @@ mod tests {
                         target: target.to_path_buf(),
                     },
                     mode: SyncMode::Upload,
+                    schedule: None,
                 }),
             })
             .unwrap()
@@ -395,6 +396,7 @@ mod tests {
                     target: target.into(),
                 },
                 mode: SyncMode::Upload,
+                schedule: None,
             }),
         };
         let err = f

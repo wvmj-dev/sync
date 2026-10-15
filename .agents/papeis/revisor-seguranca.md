@@ -22,7 +22,7 @@ qualquer código de I/O, parsing de dados externos, ou novas dependências.
 | 2 | CSP intacta (SEG-31) | `tauri.conf.json`: sem `unsafe-eval`, sem origens externas, `script-src 'self'`. |
 | 3 | Sem HTML cru (SEG-32) | `grep -rn "v-html\|innerHTML" ui/src` vazio; `invoke` só em `ui/src/api/`. |
 | 4 | Segredos contidos (SEG-04, SEG-33, SEG-52) | Nenhum token/segredo em DTO, `tracing::*`, mensagem de erro ou `#[derive(Debug)]` sem redação. |
-| 5 | Sem exclusão definitiva (SEG-10) | `grep -rn "remove_file\|remove_dir\|files.delete\|emptyTrash\|Method::DELETE"` — só aceitável em temporários do próprio app. |
+| 5 | Sem exclusão definitiva (SEG-10) | `grep -rn "remove_file\|remove_dir\|files.delete\|emptyTrash\|Method::DELETE"` — só aceitável em temporários do próprio app (`.syncly-tmp-*`) e nas units do systemd com o cabeçalho do app (`timers::HEADER`, SEG-22). |
 | 6 | OAuth (SEG-01 a SEG-07) | `SCOPES` continua só `drive.file`; PKCE + `state`; loopback em `127.0.0.1`; login no navegador do sistema; `invalid_grant` não gera retentativa. |
 | 7 | Caminhos externos (SEG-20, SEG-25, SEG-26, RN-66) | Todo caminho vindo de fora passa por `RelPath::parse`/`validate_name`; IDs do Drive por `check_id`; entradas de arquivos compactados por `archive::safe_entry_path` — nunca `unpack()`/`extract()` das bibliotecas `tar`/`zip`. Links, arquivos especiais e setuid nunca são criados. |
 | 8 | Filtros e bloqueios (SEG-24, RN-27, RN-28) | Fonte sensível barrada; erro de leitura vira `blocked`; excluído vira `excluded`; nenhum dos dois gera `Trash`. |

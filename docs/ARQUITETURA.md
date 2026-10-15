@@ -205,16 +205,27 @@ execução `receive`.
 
 Planejado: criptografia `age` com manifesto (fase 2e).
 
-## 8. Agendamento *(planejado — fase 3)*
+## 8. Agendamento e notificações
 
-- Cada agendamento vira um par `syncly-<id>.service/.timer` (um por tarefa, RN-81) em
-  `~/.config/systemd/user/`, executando `syncly run <id-da-tarefa>`.
-- O app faz **reconciliação**: a cada alteração da config, compara os timers desejados com
-  os instalados (prefixo `syncly-`) e cria/atualiza/remove — idempotente.
-- `Persistent=true` (roda após o boot se o horário passou), `RandomizedDelaySec=2min`,
+- Cada tarefa agendada vira um par `syncly-<uuid>.service/.timer` (um por tarefa, RN-81) em
+  `~/.config/systemd/user/`. O `.service` executa `<executável> run <uuid> --scheduled` —
+  `syncly` (CLI) ou `syncly-desktop`, que tem um modo sem janela para isso
+  (`src-tauri/src/headless.rs`); o RPM só instala o segundo.
+- **Reconciliação** (`Service::reconcile_schedules`): o core gera as units e compara com as
+  instaladas (`timers::render_units`/`plan_timers`, funções puras); o serviço grava, remove e
+  chama `systemctl --user daemon-reload/enable/restart/disable`. Idempotente — sem mudança,
+  nenhuma chamada. Roda ao salvar, excluir ou executar manualmente uma tarefa, ao remover
+  uma conta e ao abrir o app (que também re-aponta os timers se o executável mudou).
+- Só tarefa ativa, agendada e com uma execução manual bem-sucedida tem timer (RN-18, RN-36).
+- `Persistent=true` (roda após o boot se o horário passou, RN-83), `RandomizedDelaySec=2min`,
   `Nice=10` e `IOSchedulingClass=idle` (não atrapalha o uso do computador).
-- O agendador fica atrás de uma interface (`Scheduler`) para no futuro suportar
+- **Notificações** (RN-94): ao fim de uma execução agendada que precisa de atenção, uma
+  chamada D-Bus a `org.freedesktop.Notifications` (via `zbus`, que já vinha com o keyring).
+- Tudo que toca o sistema fica atrás de `OsIntegration` (`service/src/os.rs`): nos testes,
+  `FakeOs` registra as chamadas e as units vão para o diretório temporário; no futuro,
   launchd (macOS) e Agendador de Tarefas (Windows).
+- Em desenvolvimento, `pnpm tauri dev` re-aponta os timers para o binário de `target/`;
+  abrir o app instalado aponta de volta.
 
 ## 9. Fronteira Tauri ↔ Vue
 
@@ -298,6 +309,7 @@ Planejado: criptografia `age` com manifesto (fase 2e).
 | `wiremock` nos testes | Testar contra a conta real | Testes do Drive rodam offline, sem credenciais (regra 9 do `AGENTS.md`). |
 | `zip` só com deflate (Rust puro) + `tar`/`flate2`/`zstd` | Bibliotecas com todos os compressores (bzip2, lzma em C) | Menos código nativo; cobre os formatos comuns. Extração sempre manual, nunca `unpack()` das bibliotecas (SEG-26). |
 | `fs4` para espaço livre | Ignorar espaço em disco | RN-67: bomba de compressão e disco cheio. |
+| Notificações por D-Bus com `zbus` | `notify-rust`; chamar `notify-send` | O `zbus` já vem com o keyring: nenhum crate novo, sem depender de um programa externo instalado. |
 | Varredura própria (`std::fs`) + `ignore::gitignore` só para padrões | Walker do crate `ignore` | Controle total de exclusões, `.syncignore` e erros — necessário para RN-27/RN-28. |
 | pnpm | npm, yarn | Instalação rápida e `node_modules` estrito (sem dependências fantasmas). |
 | Sem exclusão definitiva | — | Proteção contra bugs e erros humanos (lixeira do Drive guarda 30 dias). |
@@ -315,7 +327,8 @@ Planejado: criptografia `age` com manifesto (fase 2e).
 | 2c | Restaurar versão (baixar, conferir e descompactar numa pasta nova) | ✅ |
 | 2d | Receber: rotina de recebimento, baixar e descompactar, enviar pasta compactada (RN-107 a RN-110) | ✅ |
 | 2e | Criptografia (age) e manifesto das versões | |
-| 3 | Agendamento (systemd), notificações, bandeja | |
+| 3a | Agendamento (timers do systemd) e notificações das execuções agendadas | ✅ |
+| 3b | Ícone na bandeja | |
 | 4 | Changes API, download/bidirecional (requer decisão sobre escopo — ver SEG-03) | |
 | 5 | Outros provedores (OneDrive, Dropbox, S3), macOS/Windows | |
 

@@ -29,15 +29,16 @@ impl Weekday {
         }
     }
 
-    fn label(self) -> &'static str {
+    /// "Toda segunda", "Todo sábado"…
+    fn every_label(self) -> &'static str {
         match self {
-            Self::Mon => "segunda",
-            Self::Tue => "terça",
-            Self::Wed => "quarta",
-            Self::Thu => "quinta",
-            Self::Fri => "sexta",
-            Self::Sat => "sábado",
-            Self::Sun => "domingo",
+            Self::Mon => "Toda segunda",
+            Self::Tue => "Toda terça",
+            Self::Wed => "Toda quarta",
+            Self::Thu => "Toda quinta",
+            Self::Fri => "Toda sexta",
+            Self::Sat => "Todo sábado",
+            Self::Sun => "Todo domingo",
         }
     }
 }
@@ -139,7 +140,7 @@ impl Schedule {
             Self::EveryHours { hours: 1 } => "A cada hora".into(),
             Self::EveryHours { hours } => format!("A cada {hours} horas"),
             Self::Daily { at } => format!("Diário às {at}"),
-            Self::Weekly { weekday, at } => format!("Toda {} às {at}", weekday.label()),
+            Self::Weekly { weekday, at } => format!("{} às {at}", weekday.every_label()),
             Self::Calendar { expr } => format!("Personalizado ({expr})"),
         }
     }
@@ -190,6 +191,15 @@ mod tests {
             .unwrap(),
             "Sun *-*-* 02:30:00"
         );
+    }
+
+    #[test]
+    fn rotulos_em_portugues() {
+        let at = TimeOfDay::new(3, 15).unwrap();
+        let weekly = |weekday| Schedule::Weekly { weekday, at }.label();
+        assert_eq!(weekly(Weekday::Sun), "Todo domingo às 03:15");
+        assert_eq!(weekly(Weekday::Mon), "Toda segunda às 03:15");
+        assert_eq!(Schedule::EveryHours { hours: 1 }.label(), "A cada hora");
     }
 
     #[test]

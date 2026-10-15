@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use syncly_core::archive::ArchiveFormat;
-use syncly_core::domain::{Action, Delivery, PlanStats, RunRecord, RunStatus, SyncMode};
+use syncly_core::domain::{Action, Delivery, PlanStats, RunRecord, RunStatus, Schedule, SyncMode};
 use syncly_core::sync::executor::ExecutionReport;
 use syncly_core::sync::guard::GuardVerdict;
 use uuid::Uuid;
@@ -58,7 +58,12 @@ pub struct SyncSummary {
     pub path: String,
     pub delivery: Delivery,
     pub mode: SyncMode,
+    /// Rótulo legível ("Diário às 02:00").
     pub schedule: String,
+    /// O agendamento em si, para o formulário.
+    pub schedule_spec: Schedule,
+    /// `manual`, `disabled`, `waiting_first_run` (RN-36), `active` ou `not_installed`.
+    pub schedule_state: &'static str,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -113,6 +118,9 @@ pub struct SyncDraft {
     /// Só vale para a entrega arquivo por arquivo.
     #[serde(default)]
     pub mode: SyncMode,
+    /// RN-80. `None` mantém o agendamento atual.
+    #[serde(default)]
+    pub schedule: Option<Schedule>,
 }
 
 fn default_true() -> bool {

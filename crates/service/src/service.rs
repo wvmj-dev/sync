@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, HashMap};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::Instant;
@@ -33,7 +33,9 @@ use crate::dto::{
 };
 use crate::error::{ServiceError, ServiceResult};
 use crate::google::GoogleBackend;
+use crate::os::{LinuxDesktop, OsIntegration};
 use crate::receive::ReceiveExec;
+use crate::schedule;
 use crate::secrets::{KeyringStore, SecretStore};
 
 /// Ponto de entrada dos casos de uso. A configuração é relida do disco a cada
@@ -48,6 +50,8 @@ pub struct Service {
     pub(crate) running: Mutex<HashMap<Uuid, Arc<AtomicBool>>>,
     /// Compactação/descompactação em andamento (uma por vez).
     pub(crate) archive_op: Mutex<Option<Arc<AtomicBool>>>,
+    /// systemd e notificações (RN-80 a RN-83, RN-94).
+    pub(crate) os: Arc<dyn OsIntegration>,
 }
 
 /// Tarefa lida do disco e validada, com a conta de destino.
@@ -111,16 +115,23 @@ pub(crate) fn elapsed_ms(started: Instant) -> u64 {
 }
 
 impl Service {
-    /// Produção: keyring do sistema e endpoints reais do Google.
+    /// Produção: keyring do sistema, endpoints reais do Google e systemd do usuário.
     pub fn open(paths: AppPaths) -> ServiceResult<Self> {
-        Self::with_backends(paths, Arc::new(KeyringStore), GoogleBackend::default())
+        Self::with_backends(
+            paths,
+            Arc::new(KeyringStore),
+            GoogleBackend::default(),
+            Arc::new(LinuxDesktop),
+        )
     }
 
-    /// Permite trocar o cofre e o Google — os testes usam memória e um servidor simulado.
+    /// Permite trocar o cofre, o Google e o sistema — os testes usam memória, um servidor
+    /// simulado e um systemd de mentira.
     pub fn with_backends(
         paths: AppPaths,
         secrets: Arc<dyn SecretStore>,
         google: GoogleBackend,
+        os: Arc<dyn OsIntegration>,
     ) -> ServiceResult<Self> {
         paths.ensure()?;
         Ok(Self {
@@ -131,6 +142,7 @@ impl Service {
             http: OnceLock::new(),
             running: Mutex::new(HashMap::new()),
             archive_op: Mutex::new(None),
+            os,
         })
     }
 
@@ -259,7 +271,10 @@ impl Service {
                 }
             }
             Ok(())
-        })
+        })?;
+        // RN-05, RN-18: as tarefas desativadas perdem o timer.
+        self.refresh_schedules();
+        Ok(())
     }
 
     // ---- Tarefas ----
@@ -267,10 +282,11 @@ impl Service {
     pub fn list_jobs(&self) -> ServiceResult<Vec<JobSummary>> {
         let config = self.load()?;
         let state = self.state()?;
+        let unit_dir = self.paths.systemd_unit_dir();
         config
             .jobs
             .iter()
-            .map(|j| job_summary(&config, &state, j))
+            .map(|j| job_summary(&config, &state, &unit_dir, j))
             .collect()
     }
 
@@ -288,9 +304,15 @@ impl Service {
                 RelPath::parse(&s.path).map_err(ServiceError::Invalid)?,
                 s.delivery.clone(),
                 s.mode,
+                s.schedule.clone(),
             )),
             None => None,
         };
+        // RN-82: a expressão avançada também passa pelo próprio systemd antes de salvar.
+        if let Some((.., Some(schedule @ Schedule::Calendar { expr }))) = &sync {
+            schedule.validate().map_err(ServiceError::Invalid)?;
+            self.os.verify_calendar(expr.trim())?;
+        }
         let id = self.mutate(|config| {
             let id = draft.id.unwrap_or_else(Uuid::new_v4);
             let existing = config.jobs.iter().position(|j| j.id == id);
@@ -305,17 +327,21 @@ impl Service {
                 sources: draft.sources.clone(),
                 exclude: clean_patterns(&draft.exclude),
                 include_sensitive: draft.include_sensitive,
-                sync: sync.map(|(account_id, path, delivery, mode)| SyncSettings {
-                    destination: Destination { account_id, path },
-                    delivery,
-                    mode,
-                    schedule: previous_sync
-                        .as_ref()
-                        .map_or(Schedule::Manual, |s| s.schedule.clone()),
-                    guard: previous_sync
-                        .as_ref()
-                        .map_or(GuardLimits::default(), |s| s.guard),
-                }),
+                sync: sync.map(
+                    |(account_id, path, delivery, mode, schedule)| SyncSettings {
+                        destination: Destination { account_id, path },
+                        delivery,
+                        mode,
+                        schedule: schedule.unwrap_or_else(|| {
+                            previous_sync
+                                .as_ref()
+                                .map_or(Schedule::Manual, |s| s.schedule.clone())
+                        }),
+                        guard: previous_sync
+                            .as_ref()
+                            .map_or(GuardLimits::default(), |s| s.guard),
+                    },
+                ),
             };
             match existing {
                 Some(i) => config.jobs[i] = job,
@@ -323,9 +349,10 @@ impl Service {
             }
             Ok(id)
         })?;
+        self.refresh_schedules();
         let config = self.load()?;
         let job = config.job(id).ok_or(ServiceError::NotFound("tarefa"))?;
-        job_summary(&config, &self.state()?, job)
+        job_summary(&config, &self.state()?, &self.paths.systemd_unit_dir(), job)
     }
 
     pub fn delete_job(&self, id: Uuid) -> ServiceResult<()> {
@@ -339,6 +366,8 @@ impl Service {
         })?;
         // O histórico de execuções fica; o índice não serve para mais nada.
         self.state()?.clear_job(id)?;
+        // RN-18: sem tarefa, sem timer.
+        self.refresh_schedules();
         Ok(())
     }
 
@@ -502,6 +531,20 @@ impl Service {
     /// Executa a sincronização de uma tarefa (RN-36 a RN-46, RN-90 a RN-95).
     /// `progress` é chamado a cada item; a GUI repassa como evento, a CLI imprime.
     pub async fn run_job(
+        &self,
+        id: Uuid,
+        options: RunOptions,
+        progress: impl Fn(&Progress) + Send + Sync,
+    ) -> ServiceResult<RunReport> {
+        let result = self.execute_job(id, options, progress).await;
+        // RN-36: a primeira execução manual bem-sucedida ativa o agendamento.
+        if options.trigger == RunTrigger::Manual && result.is_ok() {
+            self.refresh_schedules();
+        }
+        result
+    }
+
+    async fn execute_job(
         &self,
         id: Uuid,
         options: RunOptions,
@@ -730,7 +773,13 @@ pub(crate) fn account_summary(config: &AppConfig, account: &Account) -> AccountS
     }
 }
 
-fn job_summary(config: &AppConfig, state: &StateDb, job: &Job) -> ServiceResult<JobSummary> {
+fn job_summary(
+    config: &AppConfig,
+    state: &StateDb,
+    unit_dir: &Path,
+    job: &Job,
+) -> ServiceResult<JobSummary> {
+    let schedule_state = schedule::timer_state(state, unit_dir, job)?;
     Ok(JobSummary {
         id: job.id,
         name: job.name.clone(),
@@ -751,6 +800,8 @@ fn job_summary(config: &AppConfig, state: &StateDb, job: &Job) -> ServiceResult<
             delivery: s.delivery.clone(),
             mode: s.mode,
             schedule: s.schedule.label(),
+            schedule_spec: s.schedule.clone(),
+            schedule_state: schedule_state.as_str(),
         }),
         last_run: state.last_run(job.id)?.map(Into::into),
     })
@@ -794,6 +845,7 @@ mod tests {
                     path: "/Backup/Docs/".into(),
                     delivery: Delivery::Files,
                     mode: SyncMode::Mirror,
+                    schedule: None,
                 }),
             })
             .unwrap();
@@ -830,6 +882,7 @@ mod tests {
                     path: "Backup".into(),
                     delivery: Delivery::Files,
                     mode: SyncMode::Upload,
+                    schedule: None,
                 }),
             })
             .unwrap()
@@ -928,6 +981,7 @@ mod tests {
                     path: "Docs".into(),
                     delivery: Delivery::Files,
                     mode: SyncMode::Upload,
+                    schedule: None,
                 }),
             })
             .unwrap();

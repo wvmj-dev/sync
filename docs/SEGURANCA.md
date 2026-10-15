@@ -43,7 +43,7 @@ chaves de criptografia; integridade dos backups.
 
 ### Integridade e proteção dos dados
 
-- **SEG-10** — A interface `StorageProvider` não possui exclusão definitiva; só `trash` (RN-44).
+- **SEG-10** — A interface `StorageProvider` não possui exclusão definitiva; só `trash` (RN-44). No computador, o app só apaga de vez o que ele mesmo criou: temporários `.syncly-tmp-*` e as units dos agendamentos (SEG-22).
 - **SEG-11** — O app só opera dentro da sua pasta raiz e só altera itens presentes no seu índice (RN-03, RN-31) ou versões compactadas que ele mesmo registrou (RN-55). Tarefas que recebem só leem do destino e só criam pastas novas no computador (RN-107).
 - **SEG-12** — Guardas contra exclusão em massa e contra fonte vazia/desmontada (RN-40 a RN-43).
 - **SEG-13** — Verificação de checksum em todo upload, download e versão compactada (RN-37, RN-52, RN-58).
@@ -53,7 +53,7 @@ chaves de criptografia; integridade dos backups.
 
 - **SEG-20** — Caminhos relativos (índice, IDs do `LocalProvider`, entradas de arquivos compactados) são validados: sem componentes absolutos, `..`, `.`, vazios ou com caracteres de controle. Nomes remotos com `/` são ignorados.
 - **SEG-21** — Valores interpolados em queries do Drive são escapados (`\` e `'`). Filtros sempre incluem o ID do pai e `trashed = false`.
-- **SEG-22** — Units do systemd contêm apenas valores gerados pelo app (UUID da tarefa, caminho do binário). Expressões de agendamento passam por allowlist de caracteres (sem quebras de linha) e por `systemd-analyze calendar`.
+- **SEG-22** — Units do systemd contêm apenas valores gerados pelo app (UUID da tarefa, caminho do binário entre aspas e com `%` escapado — nunca o nome da tarefa). Expressões de agendamento passam por allowlist de caracteres (sem quebras de linha) e por `systemd-analyze calendar`. `systemctl` é chamado com argumentos fixos, sem shell. O app só altera ou remove units `syncly-<uuid>.service/.timer` que começam com o cabeçalho dele — uma unit escrita à mão nunca é tocada.
 - **SEG-23** — Links simbólicos não são seguidos (RN-24), evitando sair da fonte e loops.
 - **SEG-24** — Filtros de arquivos sensíveis valem também para a própria fonte e não podem ser desfeitos por `.syncignore` (RN-22). O `config.toml` é tratado como entrada não confiável: cada tarefa é revalidada antes de executar (RN-40).
 - **SEG-25** — IDs vindos do Drive só entram em URLs se tiverem apenas letras, números, `-` e `_`; nomes remotos passam por `validate_name` antes de virar caminho local.

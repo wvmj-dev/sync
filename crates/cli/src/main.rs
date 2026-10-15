@@ -30,6 +30,8 @@ enum Command {
     Info,
     /// Lista as contas.
     Accounts,
+    /// Atualiza os timers do systemd e mostra o agendamento de cada tarefa.
+    Schedule,
     /// Lista as tarefas.
     Jobs,
     /// Mostra o que uma execução faria, sem alterar nada.
@@ -216,6 +218,23 @@ async fn run(cli: Cli) -> Result<ExitCode, syncly_service::ServiceError> {
                 println!("{}  {:<20} {:<13} {}", a.id, a.label, a.provider, a.detail);
             }
         }
+        Command::Schedule => {
+            let active = service.reconcile_schedules()?;
+            for j in service.list_jobs()? {
+                let Some(s) = j.sync else {
+                    continue;
+                };
+                let state = match s.schedule_state {
+                    "manual" => "manual",
+                    "disabled" => "tarefa desativada",
+                    "waiting_first_run" => "ativa após a 1ª execução manual bem-sucedida",
+                    "active" => "ativo",
+                    _ => "não instalado — veja os logs",
+                };
+                println!("{:<20} {:<28} {state}", j.name, s.schedule);
+            }
+            println!("{active} timer(s) ativo(s) em ~/.config/systemd/user/");
+        }
         Command::Jobs => {
             for j in service.list_jobs()? {
                 let status = if j.enabled { "ativa" } else { "desativada" };
@@ -247,19 +266,23 @@ async fn run(cli: Cli) -> Result<ExitCode, syncly_service::ServiceError> {
             scheduled,
         } => {
             let id = service.find_job_id(&job)?;
-            let trigger = if scheduled {
-                RunTrigger::Scheduled
-            } else {
-                RunTrigger::Manual
-            };
             let interactive = std::io::stderr().is_terminal();
-            let result = service
-                .run_job(id, RunOptions { confirm, trigger }, |p| {
-                    if interactive {
-                        print_progress(p);
-                    }
-                })
-                .await;
+            // RN-43, RN-94: a agendada nunca confirma sozinha e avisa por notificação.
+            let result = if scheduled {
+                service.run_scheduled(id).await
+            } else {
+                let options = RunOptions {
+                    confirm,
+                    trigger: RunTrigger::Manual,
+                };
+                service
+                    .run_job(id, options, |p| {
+                        if interactive {
+                            print_progress(p);
+                        }
+                    })
+                    .await
+            };
             if interactive {
                 eprintln!();
             }

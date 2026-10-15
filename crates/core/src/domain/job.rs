@@ -10,6 +10,7 @@ use uuid::Uuid;
 use super::archive_format::ArchiveFormat;
 use super::check_label;
 use super::rel_path::{RelPath, validate_name};
+use super::run::RunKind;
 use super::schedule::Schedule;
 use crate::error::ValidationIssue;
 use crate::filters::Filter;
@@ -72,6 +73,15 @@ pub enum Delivery {
 impl Delivery {
     pub fn is_receive(&self) -> bool {
         matches!(self, Self::Receive { .. })
+    }
+
+    /// Tipo de execução que a tarefa registra no histórico (e que conta para RN-36).
+    pub fn run_kind(&self) -> RunKind {
+        match self {
+            Self::Files => RunKind::Sync,
+            Self::Archive { .. } => RunKind::Backup,
+            Self::Receive { .. } => RunKind::Receive,
+        }
     }
 }
 

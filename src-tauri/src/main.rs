@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod headless;
 
 use syncly_service::{AppPaths, Service, logging};
 use tauri::Manager;
@@ -16,6 +17,13 @@ fn main() {
     };
     let log_guard = logging::init(Some(&paths.log_dir), "syncly-desktop", "info");
 
+    // Chamado por um timer do systemd: executa a tarefa e sai, sem abrir janela.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(code) = headless::run(paths.clone(), &args) {
+        drop(log_guard); // `exit` não roda destrutores: descarrega o log antes.
+        std::process::exit(code);
+    }
+
     let result = tauri::Builder::default()
         // SEG-34: precisa ser o primeiro plugin registrado.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -26,7 +34,12 @@ fn main() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .setup(move |app| {
-            app.manage(Service::open(paths)?);
+            let service = Service::open(paths)?;
+            // Os timers apontam para este executável; atualiza se ele mudou (nova versão).
+            if let Err(e) = service.reconcile_schedules() {
+                tracing::warn!("agendamentos não atualizados: {e}");
+            }
+            app.manage(service);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

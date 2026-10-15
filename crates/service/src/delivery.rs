@@ -583,6 +583,7 @@ pub(crate) mod tests {
                         retention,
                     },
                     mode: SyncMode::Upload,
+                    schedule: None,
                 }),
             })
             .unwrap()

@@ -9,7 +9,13 @@ import type {
   RunReport,
   VersionItem,
 } from "../api/types";
-import { deliveryLabel, formatBytes, formatDate, runStatusLabel } from "../utils/format";
+import {
+  deliveryLabel,
+  formatBytes,
+  formatDate,
+  runStatusLabel,
+  scheduleStateLabel,
+} from "../utils/format";
 import PlanPreview from "./PlanPreview.vue";
 import VersionList from "./VersionList.vue";
 
@@ -52,6 +58,9 @@ onUnmounted(() => stopListening?.());
 
 const canRun = computed(() => !!props.job.sync && props.job.enabled && !running.value);
 const isArchive = computed(() => props.job.sync?.delivery.kind === "archive");
+const scheduleNote = computed(() =>
+  props.job.sync ? scheduleStateLabel[props.job.sync.scheduleState] : "",
+);
 const percent = computed(() => {
   const p = progress.value;
   if (!p) return 0;
@@ -168,12 +177,12 @@ async function cancel() {
         <p v-if="job.sync?.delivery.kind === 'receive'" class="muted">
           Recebe de {{ job.sync.accountLabel ?? "conta removida" }}:
           <code>{{ job.sync.path }}</code> → <code>{{ job.sync.delivery.target }}</code>
-          · {{ job.sync.schedule }}
+          · {{ job.sync.schedule }}<template v-if="scheduleNote"> ({{ scheduleNote }})</template>
         </p>
         <p v-else-if="job.sync" class="muted">
           {{ deliveryLabel(job.sync) }} →
           {{ job.sync.accountLabel ?? "conta removida" }}: <code>{{ job.sync.path }}</code>
-          · {{ job.sync.schedule }}
+          · {{ job.sync.schedule }}<template v-if="scheduleNote"> ({{ scheduleNote }})</template>
         </p>
       </div>
       <div class="row">

@@ -160,14 +160,17 @@ Tela **Compactar** e `syncly archive create|extract`.
 - **RN-73** — Versões automáticas usam só a chave pública; a privada só é lida na restauração.
 - **RN-74** — Cada versão registra a impressão digital da chave usada; trocar a chave não invalida versões antigas.
 
-## 10. Agendamento *(planejado — fase 3)*
+## 10. Agendamento
 
-- **RN-80** — Opções: manual; a cada N horas (N ∈ {1, 2, 3, 4, 6, 8, 12}); diário às HH:MM; semanal (dia + HH:MM); avançado (expressão `OnCalendar` do systemd).
+Formulário da tarefa → **Agendamento**; `syncly schedule` mostra a situação de cada tarefa.
+Cada tarefa agendada vira um timer do systemd do usuário, que roda mesmo com o app fechado.
+
+- **RN-80** — Opções: manual; a cada N horas (N ∈ {1, 2, 3, 4, 6, 8, 12}); diário às HH:MM; semanal (dia + HH:MM); avançado (expressão `OnCalendar` do systemd). O timer só existe para tarefa **ativa** (RN-18), **agendada** e que já teve uma **execução manual bem-sucedida** (RN-36); salvar, excluir ou executar uma tarefa atualiza os timers.
 - **RN-81** — Um agendamento por tarefa, qualquer que seja a forma de envio. Para sincronizar e também guardar versões das mesmas pastas, crie duas tarefas com destinos diferentes (RN-17).
 - **RN-82** — Expressão avançada: até 64 caracteres, apenas `[A-Za-z0-9 *-:/,.~]`, validada por `systemd-analyze calendar` antes de salvar.
 - **RN-83** — Execução perdida (computador desligado) roda no próximo boot/login.
-- **RN-84** — Se o keyring estiver bloqueado ou não houver rede, a execução fica **adiada**; notifica após 3 adiamentos seguidos.
-- **RN-85** — Conta em *requer reautenticação* suspende os agendamentos dela.
+- **RN-84** — Se o keyring estiver bloqueado ou não houver rede, a execução fica **adiada**; notifica após 3 adiamentos seguidos. *(planejado — hoje ela falha e notifica, RN-94)*
+- **RN-85** — Conta em *requer reautenticação* suspende os agendamentos dela. *(planejado — depende de RN-06)*
 
 ## 11. Execuções, histórico e notificações
 
@@ -175,7 +178,7 @@ Tela **Compactar** e `syncly archive create|extract`.
 - **RN-91** — Status possíveis: `sucesso`, `sucesso_parcial` (alguns itens falharam), `falha`, `abortada` (guarda, espaço, fonte), `aguardando_confirmacao`, `cancelada`, `adiada`.
 - **RN-92** — Estatísticas por execução: itens e bytes enviados/atualizados/na lixeira/ignorados/com falha, duração.
 - **RN-93** — Histórico mantido por 180 dias ou 1000 execuções por tarefa (o que vier primeiro). *(planejado)*
-- **RN-94** — Notifica em `falha`, `abortada`, `aguardando_confirmacao` e adiamentos repetidos. Sucesso é silencioso (configurável). *(planejado — fase 3)*
+- **RN-94** — Execuções **agendadas** notificam na área de trabalho quando terminam em `falha`, `abortada`, `aguardando_confirmacao` ou `sucesso_parcial`. Sucesso é silencioso, e um disparo descartado porque a tarefa já está rodando (RN-90) também. *(Planejado: adiamentos repetidos, RN-84, e escolher o que notificar.)*
 - **RN-95** — Cancelar uma execução interrompe as transferências em andamento; o que já foi confirmado permanece no índice (RN-38).
 
 ### Tratamento de erros

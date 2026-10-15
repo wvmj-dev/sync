@@ -1,4 +1,12 @@
-import type { ActionKind, ArchiveFormat, RunStatus, SyncMode, SyncSummary } from "../api/types";
+import type {
+  ActionKind,
+  ArchiveFormat,
+  RunStatus,
+  ScheduleState,
+  SyncMode,
+  SyncSummary,
+  Weekday,
+} from "../api/types";
 
 export function formatBytes(bytes: number): string {
   const units = ["B", "KiB", "MiB", "GiB", "TiB"];
@@ -44,6 +52,27 @@ export function deliveryLabel(sync: SyncSummary): string {
       return modeLabel[sync.mode];
   }
 }
+
+export const scheduleStateLabel: Record<ScheduleState, string> = {
+  manual: "",
+  disabled: "pausado: tarefa desativada",
+  waiting_first_run: "começa depois da 1ª execução manual bem-sucedida",
+  active: "ativo",
+  not_installed: "não instalado — veja os logs",
+};
+
+export const weekdays: { value: Weekday; label: string }[] = [
+  { value: "mon", label: "segunda" },
+  { value: "tue", label: "terça" },
+  { value: "wed", label: "quarta" },
+  { value: "thu", label: "quinta" },
+  { value: "fri", label: "sexta" },
+  { value: "sat", label: "sábado" },
+  { value: "sun", label: "domingo" },
+];
+
+/** RN-80: intervalos que dividem o dia igualmente. */
+export const everyHours = [1, 2, 3, 4, 6, 8, 12];
 
 export const runStatusLabel: Record<RunStatus, string> = {
   running: "Em execução",

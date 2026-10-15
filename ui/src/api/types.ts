@@ -2,6 +2,24 @@
 
 export type SyncMode = "upload" | "mirror";
 
+export type Weekday = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
+
+/** RN-80. Horários em "HH:MM". */
+export type Schedule =
+  | { kind: "manual" }
+  | { kind: "every_hours"; hours: number }
+  | { kind: "daily"; at: string }
+  | { kind: "weekly"; weekday: Weekday; at: string }
+  | { kind: "calendar"; expr: string };
+
+/** Situação do timer da tarefa (RN-18, RN-36). */
+export type ScheduleState =
+  | "manual"
+  | "disabled"
+  | "waiting_first_run"
+  | "active"
+  | "not_installed";
+
 /** RN-54. Vem do core com os mesmos nomes do config.toml (snake_case). */
 export interface Retention {
   keep_last: number;
@@ -59,7 +77,10 @@ export interface SyncSummary {
   path: string;
   delivery: Delivery;
   mode: SyncMode;
+  /** Rótulo legível ("Diário às 02:00"). */
   schedule: string;
+  scheduleSpec: Schedule;
+  scheduleState: ScheduleState;
 }
 
 export interface JobSummary {
@@ -115,6 +136,8 @@ export interface SyncDraft {
   delivery: Delivery;
   /** Só vale para a entrega arquivo por arquivo. */
   mode: SyncMode;
+  /** `null` mantém o agendamento atual. */
+  schedule: Schedule | null;
 }
 
 export interface JobDraft {

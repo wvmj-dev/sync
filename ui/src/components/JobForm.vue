@@ -9,9 +9,11 @@ import type {
   JobDraft,
   JobSummary,
   Retention,
+  Schedule,
   SyncMode,
+  Weekday,
 } from "../api/types";
-import { archiveFormats } from "../utils/format";
+import { archiveFormats, everyHours, weekdays } from "../utils/format";
 
 const props = defineProps<{ job: JobSummary | null; accounts: AccountSummary[] }>();
 const emit = defineEmits<{ save: [draft: JobDraft]; cancel: [] }>();
@@ -20,6 +22,7 @@ const emit = defineEmits<{ save: [draft: JobDraft]; cancel: [] }>();
 const DEFAULT_RETENTION: Retention = { keep_last: 3, daily: 7, weekly: 4, monthly: 6 };
 const delivery = props.job?.sync?.delivery;
 const archived = delivery?.kind === "archive" ? delivery : null;
+const schedule: Schedule = props.job?.sync?.scheduleSpec ?? { kind: "manual" };
 
 const form = reactive({
   name: props.job?.name ?? "",
@@ -36,11 +39,28 @@ const form = reactive({
   retention: { ...(archived?.retention ?? DEFAULT_RETENTION) },
   /** RN-107: pasta do computador onde as versões recebidas são descompactadas. */
   target: delivery?.kind === "receive" ? delivery.target : "",
+  scheduleKind: schedule.kind as Schedule["kind"],
+  hours: schedule.kind === "every_hours" ? schedule.hours : 6,
+  at: schedule.kind === "daily" || schedule.kind === "weekly" ? schedule.at : "02:00",
+  weekday: (schedule.kind === "weekly" ? schedule.weekday : "sun") as Weekday,
+  expr: schedule.kind === "calendar" ? schedule.expr : "",
 });
 
 const receiving = computed(() => form.delivery === "receive");
 
 const usableAccounts = computed(() => props.accounts);
+const scheduleValid = computed(() => {
+  switch (form.scheduleKind) {
+    case "daily":
+    case "weekly":
+      return /^\d{2}:\d{2}$/.test(form.at);
+    case "calendar":
+      return form.expr.trim().length > 0 && form.expr.length <= 64;
+    default:
+      return true;
+  }
+});
+
 const retentionValid = computed(() => {
   const r = form.retention;
   const counts = [r.keep_last, r.daily, r.weekly, r.monthly];
@@ -52,7 +72,8 @@ const canSave = computed(
     form.accountId &&
     form.path.trim() &&
     (receiving.value ? !!form.target : form.sources.length > 0) &&
-    (form.delivery !== "archive" || retentionValid.value),
+    (form.delivery !== "archive" || retentionValid.value) &&
+    scheduleValid.value,
 );
 
 function addSources(paths: string[]) {
@@ -71,6 +92,21 @@ async function addFiles() {
 
 async function chooseTarget() {
   form.target = (await pickFolder("Descompactar as versões recebidas em…")) ?? form.target;
+}
+
+function scheduleDraft(): Schedule {
+  switch (form.scheduleKind) {
+    case "every_hours":
+      return { kind: "every_hours", hours: form.hours };
+    case "daily":
+      return { kind: "daily", at: form.at };
+    case "weekly":
+      return { kind: "weekly", weekday: form.weekday, at: form.at };
+    case "calendar":
+      return { kind: "calendar", expr: form.expr.trim() };
+    default:
+      return { kind: "manual" };
+  }
 }
 
 function deliveryDraft(): Delivery {
@@ -98,6 +134,7 @@ function submit() {
       path: form.path,
       delivery: deliveryDraft(),
       mode: form.mode,
+      schedule: scheduleDraft(),
     },
   });
 }
@@ -251,6 +288,41 @@ function submit() {
         </span>
       </label>
     </template>
+
+    <fieldset class="field">
+      <legend>Agendamento</legend>
+      <div class="row">
+        <select v-model="form.scheduleKind" aria-label="Quando executar">
+          <option value="manual">Só quando eu clicar em Executar</option>
+          <option value="every_hours">A cada…</option>
+          <option value="daily">Todo dia</option>
+          <option value="weekly">Toda semana</option>
+          <option value="calendar">Personalizado (systemd)</option>
+        </select>
+        <select v-if="form.scheduleKind === 'every_hours'" v-model.number="form.hours" aria-label="Intervalo">
+          <option v-for="h in everyHours" :key="h" :value="h">{{ h === 1 ? "1 hora" : `${h} horas` }}</option>
+        </select>
+        <select v-if="form.scheduleKind === 'weekly'" v-model="form.weekday" aria-label="Dia da semana">
+          <option v-for="d in weekdays" :key="d.value" :value="d.value">{{ d.label }}</option>
+        </select>
+        <template v-if="form.scheduleKind === 'daily' || form.scheduleKind === 'weekly'">
+          <span>às</span>
+          <input v-model="form.at" type="time" aria-label="Horário" required />
+        </template>
+        <input
+          v-if="form.scheduleKind === 'calendar'"
+          v-model="form.expr"
+          maxlength="64"
+          placeholder="Ex.: Mon..Fri *-*-* 18:30:00"
+          aria-label="Expressão OnCalendar"
+        />
+      </div>
+      <small v-if="form.scheduleKind !== 'manual'" class="muted">
+        Roda sozinho pelo systemd, mesmo com o app fechado; se o computador estiver desligado no
+        horário, roda ao ligar. Só começa depois da <strong>primeira execução manual</strong>
+        bem-sucedida, e nunca confirma nada sozinho — se precisar, avisa por notificação.
+      </small>
+    </fieldset>
 
     <label class="choice">
       <input v-model="form.enabled" type="checkbox" />

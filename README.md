@@ -26,7 +26,8 @@ e TAR. Tudo verificado por checksum.
 | **Restaurar uma versão**: baixa, confere o checksum e descompacta numa pasta nova | ✅ |
 | **Receber**: tarefa que baixa a versão mais recente e descompacta numa pasta nova | ✅ |
 | Criptografia das versões | fase 2e |
-| Agendamento, notificações, ícone na bandeja | fase 3 |
+| **Agendamento** (a cada N horas, diário, semanal ou personalizado) pelo systemd, mesmo com o app fechado; notificação quando algo precisa de atenção | ✅ |
+| Ícone na bandeja | fase 3b |
 | Sincronização bidirecional | fase 4 |
 | Outros provedores; macOS e Windows | fase 5 |
 
@@ -59,7 +60,7 @@ Para usar o Google Drive, configure antes o seu projeto no Google Cloud:
 |---|---|
 | **Visão geral** | Primeiros passos, tarefas e última execução, onde ficam config, dados e logs. |
 | **Contas** | **Conectar Google Drive** (abre o navegador; clique em *Continuar* no aviso "O Google não verificou este app" — é o seu próprio app) e adicionar **pastas locais** (HD externo, NAS). |
-| **Tarefas** | Criar uma tarefa (o que ela faz + destino), **Pré-visualizar** e **Executar**. Na primeira execução o app pede confirmação. Em tarefas compactadas, **Versões → Restaurar…** descompacta uma versão numa pasta nova. |
+| **Tarefas** | Criar uma tarefa (o que ela faz + destino + agendamento), **Pré-visualizar** e **Executar**. Na primeira execução o app pede confirmação; o agendamento só começa depois dela. Em tarefas compactadas, **Versões → Restaurar…** descompacta uma versão numa pasta nova. |
 | **Arquivos** | Navegar na pasta `Syncly/` de uma conta, **enviar** e **baixar** arquivos avulsos, **enviar uma pasta compactada** e **baixar e descompactar** um `.zip`/`.tar.*`. |
 | **Compactar** | Compactar pastas/arquivos em ZIP, TAR.GZ, TAR.ZST ou TAR, e descompactar numa pasta nova. |
 
@@ -87,7 +88,10 @@ Dicas:
 - Da segunda execução em diante, só vai o que mudou.
 - Compactar não é criptografar: as versões ficam legíveis no Drive, como os demais arquivos.
 - Enquanto o app estiver em "Testando" no Google Cloud, o login vale por 7 dias; depois,
-  **Contas → Reconectar**.
+  **Contas → Reconectar**. Até lá, as execuções agendadas no Drive falham — e avisam por
+  notificação.
+- Agendamentos: o primeiro disparo só acontece depois de uma execução manual bem-sucedida.
+  Para conferir os timers: `systemctl --user list-timers 'syncly-*'`.
 - Nada some sem querer: o app nunca sobrescreve nem apaga definitivamente — envio que já
   existe é recusado, download e compactação usam `nome (2)`.
 
@@ -100,6 +104,7 @@ cargo run -p syncly-cli -- jobs
 cargo run -p syncly-cli -- preview Documentos         # nome ou ID da tarefa
 cargo run -p syncly-cli -- run Documentos --confirm   # executa (1ª vez exige --confirm)
 cargo run -p syncly-cli -- jobs                       # mostra o tipo: envio, espelho ou compactado
+cargo run -p syncly-cli -- schedule                   # atualiza os timers e mostra o agendamento
 cargo run -p syncly-cli -- versions Mundo             # versões de uma tarefa compactada
 cargo run -p syncly-cli -- restore Mundo --to ~/Restaurados   # a mais recente, numa pasta nova
 cargo run -p syncly-cli -- restore Mundo --to ~/Restaurados --version Mundo_2026-10-14
