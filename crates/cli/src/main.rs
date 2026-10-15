@@ -5,8 +5,10 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand, ValueEnum};
+use syncly_core::domain::{Delivery, SyncMode};
+use syncly_core::sync::executor::ExecutionReport;
 use syncly_core::sync::guard::GuardVerdict;
-use syncly_service::dto::{PlanPreview, RemoteItem, RunReport, human_bytes};
+use syncly_service::dto::{ArchivePreview, PlanPreview, RemoteItem, RunReport, human_bytes};
 use syncly_service::{
     AppPaths, ArchiveFormat, ArchiveProgress, CompressRequest, Progress, RunOptions, RunTrigger,
     Service, ServiceError, logging,
@@ -27,7 +29,7 @@ enum Command {
     Accounts,
     /// Lista as tarefas.
     Jobs,
-    /// Mostra o que uma sincronização faria, sem alterar nada.
+    /// Mostra o que uma execução faria, sem alterar nada.
     Preview {
         /// Nome ou ID da tarefa.
         job: String,
@@ -35,7 +37,7 @@ enum Command {
         #[arg(long)]
         all: bool,
     },
-    /// Executa a sincronização de uma tarefa.
+    /// Executa uma tarefa (sincronização ou envio compactado).
     Run {
         /// Nome ou ID da tarefa.
         job: String,
@@ -193,7 +195,7 @@ async fn run(cli: Cli) -> Result<ExitCode, syncly_service::ServiceError> {
                     |s| {
                         format!(
                             "{} → {}:{}",
-                            mode_label(s.mode),
+                            delivery_label(s.delivery, s.mode),
                             s.account_label.as_deref().unwrap_or("?"),
                             s.path
                         )
@@ -409,6 +411,35 @@ fn print_report(r: &RunReport) {
     };
     let e = &r.report;
     println!("{label} em {:.1} s", r.duration_ms as f64 / 1000.0);
+    if let Some(a) = &r.archive {
+        match &a.name {
+            Some(name) => println!(
+                "  versão enviada: {name}  ({} arquivo(s), {} → {})",
+                a.files,
+                human_bytes(a.bytes_in),
+                human_bytes(a.bytes_out)
+            ),
+            None => println!("  nada mudou desde a última versão — nada foi enviado"),
+        }
+        println!(
+            "  versões no destino: {}  antigas para a lixeira: {}",
+            a.versions, e.trashed
+        );
+    } else {
+        print_counts(e);
+    }
+    if let Some(reason) = &e.aborted {
+        println!("  motivo: {reason}");
+    }
+    if r.failure_count > 0 {
+        println!("  {} falha(s):", r.failure_count);
+        for f in e.failures.iter().take(10) {
+            println!("    {}: {}", f.path, f.error);
+        }
+    }
+}
+
+fn print_counts(e: &ExecutionReport) {
     println!(
         "  enviados: {}  atualizados: {}  conflitos: {}  pastas: {}  lixeira: {}  ({})",
         e.uploaded,
@@ -423,15 +454,6 @@ fn print_report(r: &RunReport) {
             "  {} arquivo(s) mudaram durante o envio e vão de novo na próxima execução",
             e.unstable
         );
-    }
-    if let Some(reason) = &e.aborted {
-        println!("  motivo: {reason}");
-    }
-    if r.failure_count > 0 {
-        println!("  {} falha(s):", r.failure_count);
-        for f in e.failures.iter().take(10) {
-            println!("    {}: {}", f.path, f.error);
-        }
     }
 }
 
@@ -463,14 +485,61 @@ fn print_item(item: &RemoteItem) {
     println!("  {:<40} {:>10}  {when}  {who}{note}", item.name, size);
 }
 
-fn mode_label(mode: syncly_core::domain::SyncMode) -> &'static str {
-    match mode {
-        syncly_core::domain::SyncMode::Upload => "envio",
-        syncly_core::domain::SyncMode::Mirror => "espelho",
+fn delivery_label(delivery: Delivery, mode: SyncMode) -> String {
+    match (delivery, mode) {
+        (Delivery::Archive { format, .. }, _) => format!("compactado .{}", format.extension()),
+        (Delivery::Files, SyncMode::Upload) => "envio".into(),
+        (Delivery::Files, SyncMode::Mirror) => "espelho".into(),
     }
 }
 
 fn print_preview(p: &PlanPreview, limit: usize) {
+    match &p.archive {
+        Some(a) => print_archive_preview(a),
+        None => print_plan(p, limit),
+    }
+    for w in &p.warnings {
+        println!("aviso: {w}");
+    }
+    match &p.verdict {
+        GuardVerdict::Proceed => println!("Pronto para executar."),
+        GuardVerdict::NeedsConfirmation(r) => {
+            println!("Exige confirmação (--confirm):");
+            r.iter().for_each(|x| println!("  - {x}"));
+        }
+        GuardVerdict::Abort(r) => {
+            println!("BLOQUEADO:");
+            r.iter().for_each(|x| println!("  - {x}"));
+        }
+    }
+}
+
+fn print_archive_preview(a: &ArchivePreview) {
+    if a.unchanged {
+        println!(
+            "Nada mudou desde a última versão — nada será enviado ({} versão(ões) no destino).",
+            a.versions
+        );
+        return;
+    }
+    println!("Envio compactado:");
+    println!("  nova versão:      {}", a.name);
+    println!(
+        "  conteúdo:         {} arquivo(s), {} pasta(s), {} antes de compactar",
+        a.files,
+        a.folders,
+        human_bytes(a.bytes)
+    );
+    println!("  versões atuais:   {}", a.versions);
+    if a.to_trash.is_empty() {
+        println!("  lixeira:          nenhuma versão");
+    } else {
+        println!("  lixeira (versões antigas, pela retenção):");
+        a.to_trash.iter().for_each(|n| println!("    {n}"));
+    }
+}
+
+fn print_plan(p: &PlanPreview, limit: usize) {
     let s = &p.stats;
     println!(
         "Plano ({} ms, {} arquivo(s) com hash recalculado):",
@@ -499,19 +568,5 @@ fn print_preview(p: &PlanPreview, limit: usize) {
     }
     if p.total_actions > limit.min(p.actions.len()) {
         println!("  … {} ação(ões) no total", p.total_actions);
-    }
-    for w in &p.warnings {
-        println!("aviso: {w}");
-    }
-    match &p.verdict {
-        GuardVerdict::Proceed => println!("Pronto para executar."),
-        GuardVerdict::NeedsConfirmation(r) => {
-            println!("Exige confirmação (--confirm):");
-            r.iter().for_each(|x| println!("  - {x}"));
-        }
-        GuardVerdict::Abort(r) => {
-            println!("BLOQUEADO:");
-            r.iter().for_each(|x| println!("  - {x}"));
-        }
     }
 }

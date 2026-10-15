@@ -1,3 +1,3 @@
-//! Backups (RN-50 a RN-58). Nesta fase: só a política de retenção.
+//! Versões de tarefas que enviam compactado: política de retenção (RN-54, RN-55).
 
 pub mod retention;

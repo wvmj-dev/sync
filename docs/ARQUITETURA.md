@@ -91,19 +91,19 @@ src-tauri ──► service ──► gdrive ──► core
 │   ├── core/src/
 │   │   ├── domain/            # tipos e validações (account, job, schedule, rel_path, plan…)
 │   │   ├── sync/              # scanner, remote_tree, planner, guard, executor, retry
-│   │   ├── archive/           # compactar/descompactar zip e tar (gz, zst), com validação de entradas
-│   │   ├── backup/            # retention (e, nas próximas fases, backup/restore)
+│   │   ├── archive/           # compactar/descompactar zip e tar (gz, zst), nome e impressão digital das versões
+│   │   ├── backup/            # retention: quais versões manter (RN-54)
 │   │   ├── providers/local.rs # LocalProvider
 │   │   ├── provider.rs        # trait StorageProvider + classificação de erros
 │   │   ├── hash.rs            # hash em streaming no algoritmo de cada provedor
 │   │   ├── fsutil.rs          # escrita atômica, permissões 0700/0600
 │   │   ├── filters.rs         # exclusões padrão e de arquivos sensíveis
 │   │   ├── config.rs          # leitura/escrita atômica do config.toml
-│   │   ├── state.rs           # SQLite: índice, execuções, backups
+│   │   ├── state.rs           # SQLite: índice, execuções, versões compactadas
 │   │   ├── lock.rs            # trava exclusiva por tarefa
 │   │   └── paths.rs           # diretórios XDG
 │   ├── gdrive/src/            # auth, oauth, client, provider, endpoints, query, error
-│   ├── service/src/           # service (tarefas/execução), google, transfers, archive, secrets, dto, logging
+│   ├── service/src/           # service (tarefas/execução), delivery (envio compactado), google, transfers, archive, secrets, dto, logging
 │   └── cli/src/
 ├── src-tauri/
 │   ├── capabilities/default.json  # allowlist de comandos da janela
@@ -124,7 +124,8 @@ src-tauri ──► service ──► gdrive ──► core
 |---|---|---|---|
 | Configuração (contas, tarefas, preferências) | `~/.config/syncly/config.toml` | TOML versionado (`version = 1`) | `0600` |
 | Cliente OAuth do Google | `~/.config/syncly/google-client.json` | JSON baixado do Google Cloud | `0600` |
-| Estado (índice, execuções, backups) | `~/.local/share/syncly/state.db` | SQLite (WAL) | dir `0700` |
+| Estado (índice, execuções, versões enviadas) | `~/.local/share/syncly/state.db` | SQLite (WAL) | dir `0700` |
+| Temporários do envio compactado | `~/.local/share/syncly/tmp/<tarefa>/.syncly-tmp-*` | apagados ao fim de cada execução | dir `0700` |
 | Logs | `~/.local/state/syncly/logs/` (`syncly-desktop.AAAA-MM-DD.log`, `syncly-cli.…`) | texto, rotação diária, 14 dias; nível via `SYNCLY_LOG` | dir `0700` |
 | Travas | `$XDG_RUNTIME_DIR/syncly/` | arquivo + `flock` | dir `0700` |
 | Tokens OAuth e chaves de criptografia | Keyring do sistema (Secret Service: GNOME Keyring/KWallet) | — | cifrado pelo SO |
@@ -157,24 +158,40 @@ histórico) e pode ser reconstruído (RN-56).
    verificado por checksum e gravado no índice; progresso por evento e cancelamento (RN-95).
 8. **Registrar** — status e estatísticas no histórico (RN-91, RN-92). Notificações: fase 3.
 
-## 7. Fluxo de backup *(planejado — fase 2b)*
+## 7. Fluxo do envio compactado
 
-Vai reaproveitar a compactação já existente (`core/src/archive/`, formato `.tar.zst`).
+Quando a tarefa envia **compactado** (`Delivery::Archive`), `run_job` desvia para
+`service/src/delivery.rs`. A trava, a validação e a confirmação são as mesmas da seção 6.
 
 ```
-fontes ─► tar ─► zstd ─► (age) ─► arquivo .partial ─► verificar sha256 ─► renomear
-                                                             │
-                                          destino local ◄────┴────► upload resumable (Drive)
-                                                             │
-                                                   aplicar retenção (só após sucesso)
+1. trava + validar ─► 2. varrer (sem hash) ─► 3. impressão digital ─► igual à última versão
+                                                                      e ela está intacta? ─► sucesso, nada enviado
+                                                                                │ não
+4. guardas (fonte ausente/vazia, 1ª vez) ─► 5. espaço local ─► 6. compactar em tmp/ (zip ou tar.*)
+                                                                                │
+9. retenção: versões antigas registradas ─► lixeira ◄── 8. registrar versão ◄── 7. cota + enviar (checksum)
 ```
 
-Backup remoto é **um único arquivo compactado** — uma sequência de requisições em vez de
-milhares, o que é mais rápido e muito mais gentil com as cotas da API.
+- **Impressão digital** (`archive::versions::fingerprint`, RN-59): MD5 de caminho, tamanho e
+  data de cada entrada — barato, sem ler o conteúdo. Igual à última versão (e no mesmo
+  formato) → não recompacta nem reenvia.
+- **Guarda** (`guard::evaluate_archive`): fonte ausente (RN-40), fonte vazia com versões
+  anteriores (RN-41), nada para compactar, primeira execução (RN-36).
+- **Compactação** em `~/.local/share/syncly/tmp/<tarefa>/`, numa thread à parte, com
+  progresso e cancelamento; o temporário é apagado ao sair (com sucesso ou erro).
+- **Versões** ficam na tabela `archives` do `state.db` (tarefa, conta, pasta, ID remoto,
+  nome, tamanho, hash, impressão digital). A retenção (`backup::retention`) só considera
+  esses registros; antes de mandar uma versão para a lixeira, o app confere que ela ainda
+  tem o nome e o tamanho registrados (RN-55).
+- Uma versão é **um único arquivo**: uma sequência de requisições em vez de milhares — mais
+  rápido e muito mais gentil com as cotas da API.
+
+Planejado (fase 2c/2d): restaurar uma versão (baixar + descompactar numa pasta nova),
+manifesto com sha256 e criptografia `age`.
 
 ## 8. Agendamento *(planejado — fase 3)*
 
-- Cada agendamento vira um par `syncly-<id>-<sync|backup>.service/.timer` em
+- Cada agendamento vira um par `syncly-<id>.service/.timer` (um por tarefa, RN-81) em
   `~/.config/systemd/user/`, executando `syncly run <id-da-tarefa>`.
 - O app faz **reconciliação**: a cada alteração da config, compara os timers desejados com
   os instalados (prefixo `syncly-`) e cria/atualiza/remove — idempotente.
@@ -214,12 +231,13 @@ milhares, o que é mais rápido e muito mais gentil com as cotas da API.
 | Streaming em tudo (upload, hash, tar, zstd, age) | Memória constante, independente do tamanho do arquivo. |
 | zstd nível 3 multithread | Compressão rápida; dados já comprimidos passam quase sem custo. |
 | Compactar sem hash | A compactação reaproveita a varredura, mas pula o cálculo de MD5. |
+| Impressão digital das fontes no envio compactado | Execução sem mudanças custa só a varredura: nada é recompactado nem reenviado (RN-59). |
 | ZIP sem recompressão de jpg/mp4/zip… | Arquivos já comprimidos vão "armazenados", sem gastar CPU. |
 | Changes API (fase 4) | Detectar mudanças remotas sem listar tudo. |
 
 > Pior caso do Drive: muitos arquivos pequenos (≈1 requisição por arquivo). Para pastas com
 > dezenas de milhares de arquivos pequenos (ex.: projetos com dependências), prefira
-> **backup compactado** em vez de sincronização arquivo a arquivo.
+> o **envio compactado** (seção 7) em vez de sincronização arquivo a arquivo.
 
 ## 11. Manutenção
 
@@ -253,7 +271,9 @@ milhares, o que é mais rápido e muito mais gentil com as cotas da API.
 | Escopo `drive.file` | `drive` (acesso total) | Menor privilégio, escopo não sensível (sem verificação), bug não alcança outros arquivos. |
 | Timers do systemd | Daemon próprio em segundo plano | Roda com o app fechado, sobrevive a reboot, zero código de agendador. |
 | TOML (config) + SQLite (estado) | Tudo em JSON / tudo em SQLite | Config legível e portátil; estado transacional e rápido. |
-| Compactação avulsa em ZIP, TAR, TAR.GZ e TAR.ZST; backups em `tar.zst` | Um formato só | ZIP abre em qualquer sistema; TAR.GZ é o padrão do Linux; zstd é o mais rápido e compacto. |
+| ZIP, TAR, TAR.GZ e TAR.ZST, à escolha (avulso e nas tarefas) | Um formato só | ZIP abre em qualquer sistema; TAR.GZ é o padrão do Linux; zstd é o mais rápido e compacto. |
+| Backup = forma de envio da tarefa (compactado, com versões) | Tarefa com "sincronização" e "backup" separados, pasta `Backups/` reservada | Um conceito a menos e um agendamento por tarefa; local ou remoto vem da conta de destino. |
+| Versões registradas no `state.db` | Reconhecer versões pelo padrão do nome | A retenção nunca toca um arquivo que o app não criou, mesmo com nome parecido (RN-55). |
 | `age` para criptografia | GPG; AES "caseiro" | Formato moderno e auditado, streaming, chave pública permite backup automático sem segredo em memória. |
 | `rustls` | OpenSSL | Sem dependência nativa, implementação memory-safe. |
 | `reqwest` 0.13 (HTTP/2, `rustls`) | crate `google-drive3` | Já citado acima; HTTP/2 reaproveita a conexão entre requisições. |
@@ -274,7 +294,9 @@ milhares, o que é mais rápido e muito mais gentil com as cotas da API.
 | 1b | Executor, sync manual (modo envio/espelho) com progresso e cancelamento | ✅ |
 | 1c | Status e última modificação (RN-100 a RN-103) | |
 | 2a | Compactar e descompactar (zip, tar, tar.gz, tar.zst) | ✅ |
-| 2b | Backups local/remoto, criptografia (age), retenção, restauração | |
+| 2b | Envio compactado: versões com data, retenção, backup local/remoto | ✅ |
+| 2c | Restaurar versão (baixar e descompactar numa pasta nova; só arquivos do próprio app) | |
+| 2d | Criptografia (age) e manifesto das versões | |
 | 3 | Agendamento (systemd), notificações, bandeja | |
 | 4 | Changes API, download/bidirecional (requer decisão sobre escopo — ver SEG-03) | |
 | 5 | Outros provedores (OneDrive, Dropbox, S3), macOS/Windows | |
@@ -282,6 +304,7 @@ milhares, o que é mais rápido e muito mais gentil com as cotas da API.
 Limitações conhecidas:
 
 - O `LocalProvider` calcula o hash de cada arquivo do destino a cada listagem — lento para
-  destinos locais grandes; um cache persistente entra na fase 2b.
+  destinos locais grandes na sincronização arquivo por arquivo (o envio compactado não
+  lista conteúdo: usa só os nomes). Um cache persistente fica para uma fase futura.
 - A listagem do destino remoto é feita uma pasta por vez.
 - Na tela Arquivos ainda não há botão para criar pasta (a CLI `remote put` cria as que faltam).

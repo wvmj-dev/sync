@@ -5,7 +5,8 @@ use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use syncly_core::domain::{Action, PlanStats, RunRecord, RunStatus, SyncMode};
+use syncly_core::archive::ArchiveFormat;
+use syncly_core::domain::{Action, Delivery, PlanStats, RunRecord, RunStatus, SyncMode};
 use syncly_core::sync::executor::ExecutionReport;
 use syncly_core::sync::guard::GuardVerdict;
 use uuid::Uuid;
@@ -46,7 +47,6 @@ pub struct JobSummary {
     pub exclude: Vec<String>,
     pub include_sensitive: bool,
     pub sync: Option<SyncSummary>,
-    pub backup_enabled: bool,
     pub last_run: Option<RunSummary>,
 }
 
@@ -56,6 +56,7 @@ pub struct SyncSummary {
     pub account_id: Uuid,
     pub account_label: Option<String>,
     pub path: String,
+    pub delivery: Delivery,
     pub mode: SyncMode,
     pub schedule: String,
 }
@@ -85,7 +86,7 @@ impl From<RunRecord> for RunSummary {
 }
 
 /// Criação/edição de tarefa vinda da UI. Campos que a UI ainda não edita
-/// (agendamento, guardas, backup) são preservados ao editar.
+/// (agendamento, guardas) são preservados ao editar.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JobDraft {
@@ -106,6 +107,10 @@ pub struct JobDraft {
 pub struct SyncDraft {
     pub account_id: Uuid,
     pub path: String,
+    /// RN-50: arquivo por arquivo (padrão) ou compactado com versões.
+    #[serde(default)]
+    pub delivery: Delivery,
+    /// Só vale para a entrega arquivo por arquivo.
     #[serde(default)]
     pub mode: SyncMode,
 }
@@ -128,6 +133,41 @@ pub struct PlanPreview {
     pub hashed_files: usize,
     pub duration_ms: u64,
     pub first_run: bool,
+    /// Presente quando a tarefa envia compactado; aí `stats` e `actions` ficam vazios.
+    pub archive: Option<ArchivePreview>,
+}
+
+/// O que uma execução compactada faria agora (RN-50 a RN-59).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArchivePreview {
+    /// Nome que a versão teria se fosse criada agora.
+    pub name: String,
+    pub format: ArchiveFormat,
+    pub files: u64,
+    pub folders: u64,
+    /// Tamanho antes de compactar.
+    pub bytes: u64,
+    /// RN-59: nada mudou desde a última versão — nada será enviado.
+    pub unchanged: bool,
+    /// Versões já enviadas para este destino.
+    pub versions: usize,
+    /// RN-54: versões que iriam para a lixeira depois do envio.
+    pub to_trash: Vec<String>,
+}
+
+/// Resultado específico de uma execução compactada.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArchiveRun {
+    /// Versão criada; `None` quando nada mudou (RN-59).
+    pub name: Option<String>,
+    pub files: u64,
+    pub bytes_in: u64,
+    pub bytes_out: u64,
+    pub unchanged: bool,
+    /// Versões mantidas no destino depois da retenção.
+    pub versions: usize,
 }
 
 /// Item listado numa conta (arquivo ou pasta dentro de `Syncly/`).
@@ -157,6 +197,8 @@ pub struct RunReport {
     pub report: ExecutionReport,
     pub failure_count: usize,
     pub duration_ms: u64,
+    /// Presente quando a tarefa envia compactado.
+    pub archive: Option<ArchiveRun>,
 }
 
 pub const MAX_REPORT_FAILURES: usize = 50;
@@ -170,6 +212,7 @@ impl RunReport {
             report,
             failure_count,
             duration_ms,
+            archive: None,
         }
     }
 }

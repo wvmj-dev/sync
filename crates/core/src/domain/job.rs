@@ -1,4 +1,4 @@
-//! Tarefa: fontes + sincronização e/ou backup (RN-10 a RN-18, RN-50 a RN-55).
+//! Tarefa ("rotina"): fontes + destino + forma de entrega (RN-10 a RN-19, RN-50 a RN-55).
 
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
@@ -6,6 +6,7 @@ use std::path::{Component, Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use super::archive_format::ArchiveFormat;
 use super::check_label;
 use super::rel_path::{RelPath, validate_name};
 use super::schedule::Schedule;
@@ -13,8 +14,6 @@ use crate::error::ValidationIssue;
 use crate::filters::Filter;
 
 pub const MAX_SOURCES: usize = 32;
-/// Pasta remota reservada para backups (RN-51): sincronização não pode usá-la.
-pub const BACKUPS_DIR: &str = "Backups";
 const SYSTEM_DIRS: [&str; 4] = ["/proc", "/sys", "/dev", "/run"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -51,9 +50,27 @@ impl Default for GuardLimits {
     }
 }
 
+/// Como a tarefa entrega as fontes no destino — a "forma" da rotina.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Delivery {
+    /// Arquivo por arquivo: sincronização (modos Envio/Espelho, RN-30 a RN-39).
+    #[default]
+    Files,
+    /// Um arquivo compactado por execução, com versões (RN-50 a RN-55, RN-59).
+    Archive {
+        format: ArchiveFormat,
+        #[serde(default)]
+        retention: Retention,
+    },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SyncSettings {
     pub destination: Destination,
+    #[serde(default)]
+    pub delivery: Delivery,
+    /// Só vale para [`Delivery::Files`].
     #[serde(default)]
     pub mode: SyncMode,
     #[serde(default)]
@@ -83,28 +100,6 @@ impl Default for Retention {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BackupSettings {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub local_dir: Option<PathBuf>,
-    /// Conta onde os backups vão para `Syncly/Backups/<tarefa>/`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub remote_account_id: Option<Uuid>,
-    #[serde(default = "default_compression_level")]
-    pub compression_level: u8,
-    /// Chave pública `age` (RN-71). Ausente = sem criptografia.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub encryption_recipient: Option<String>,
-    #[serde(default)]
-    pub retention: Retention,
-    #[serde(default)]
-    pub schedule: Schedule,
-}
-
-fn default_compression_level() -> u8 {
-    3
-}
-
 fn default_true() -> bool {
     true
 }
@@ -121,10 +116,9 @@ pub struct Job {
     /// RN-22: arquivos sensíveis só entram se marcado explicitamente.
     #[serde(default)]
     pub include_sensitive: bool,
+    /// Destino e forma de entrega (RN-15: obrigatório).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sync: Option<SyncSettings>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub backup: Option<BackupSettings>,
 }
 
 /// Informações externas necessárias para validar uma tarefa.
@@ -231,67 +225,26 @@ impl Job {
         }
 
         // RN-15
-        if self.sync.is_none() && self.backup.is_none() {
-            push("ações", "ative sincronização e/ou backup".into());
+        if self.sync.is_none() {
+            push("destino", "escolha a conta e a pasta de destino".into());
         }
 
         if let Some(sync) = &self.sync {
             // RN-16
-            let path = &sync.destination.path;
-            if path.is_root() {
+            if sync.destination.path.is_root() {
                 push("destino", "informe uma pasta de destino".into());
-            } else if path
-                .components()
-                .next()
-                .is_some_and(|c| c.eq_ignore_ascii_case(BACKUPS_DIR))
+            }
+            // RN-54: pelo menos a versão mais recente é mantida.
+            if let Delivery::Archive { retention, .. } = sync.delivery
+                && retention.keep_last < 1
             {
-                push(
-                    "destino",
-                    format!("'{BACKUPS_DIR}' é reservada para backups"),
-                );
+                push("versões", "mantenha pelo menos a última versão".into());
             }
             if !(1..=100).contains(&sync.guard.max_trash_percent) {
                 push("proteção", "percentual deve estar entre 1 e 100".into());
             }
             if let Err(e) = sync.schedule.validate() {
                 push("agendamento", e);
-            }
-        }
-
-        if let Some(backup) = &self.backup {
-            // RN-51
-            if backup.local_dir.is_none() && backup.remote_account_id.is_none() {
-                push("backup", "escolha um destino local e/ou remoto".into());
-            }
-            if let Some(dir) = &backup.local_dir {
-                if !dir.is_absolute() {
-                    push(
-                        "backup",
-                        "a pasta local deve ser um caminho absoluto".into(),
-                    );
-                } else if self.sources.iter().any(|s| dir.starts_with(s)) {
-                    push(
-                        "backup",
-                        "a pasta de backup não pode ficar dentro de uma fonte".into(),
-                    );
-                }
-            }
-            if !(1..=19).contains(&backup.compression_level) {
-                push(
-                    "backup",
-                    "nível de compressão deve estar entre 1 e 19".into(),
-                );
-            }
-            if backup.retention.keep_last < 1 {
-                push("backup", "mantenha pelo menos o último backup".into());
-            }
-            if let Some(key) = &backup.encryption_recipient
-                && !key.starts_with("age1")
-            {
-                push("backup", "chave pública de criptografia inválida".into());
-            }
-            if let Err(e) = backup.schedule.validate() {
-                push("agendamento do backup", e);
             }
         }
 
@@ -316,11 +269,11 @@ mod tests {
                     account_id: Uuid::new_v4(),
                     path: RelPath::parse("Docs").unwrap(),
                 },
+                delivery: Delivery::Files,
                 mode: SyncMode::Upload,
                 schedule: Schedule::Manual,
                 guard: GuardLimits::default(),
             }),
-            backup: None,
         }
     }
 
@@ -360,19 +313,20 @@ mod tests {
     }
 
     #[test]
-    fn rn15_precisa_de_uma_acao() {
+    fn rn15_precisa_de_um_destino() {
         let mut j = job(&["/home/u/Docs"]);
         j.sync = None;
         assert!(!issues(&j).is_empty());
     }
 
     #[test]
-    fn rn16_destino_reservado_ou_raiz() {
+    fn rn16_destino_nao_pode_ser_a_raiz() {
         let mut j = job(&["/home/u/Docs"]);
         if let Some(s) = j.sync.as_mut() {
-            s.destination.path = RelPath::parse("backups/x").unwrap();
+            s.destination.path = RelPath::parse("Backups/x").unwrap();
         }
-        assert!(!issues(&j).is_empty());
+        // "Backups" deixou de ser reservada: tarefas compactadas costumam usá-la.
+        assert!(issues(&j).is_empty());
         if let Some(s) = j.sync.as_mut() {
             s.destination.path = RelPath::root();
         }
@@ -393,16 +347,22 @@ mod tests {
     }
 
     #[test]
-    fn rn51_backup_dentro_da_fonte() {
+    fn rn54_compactado_mantem_ao_menos_uma_versao() {
         let mut j = job(&["/home/u/Docs"]);
-        j.backup = Some(BackupSettings {
-            local_dir: Some("/home/u/Docs/backups".into()),
-            remote_account_id: None,
-            compression_level: 3,
-            encryption_recipient: None,
-            retention: Retention::default(),
-            schedule: Schedule::Manual,
-        });
+        let archive = |keep_last| Delivery::Archive {
+            format: ArchiveFormat::TarZst,
+            retention: Retention {
+                keep_last,
+                ..Retention::default()
+            },
+        };
+        if let Some(s) = j.sync.as_mut() {
+            s.delivery = archive(0);
+        }
         assert!(!issues(&j).is_empty());
+        if let Some(s) = j.sync.as_mut() {
+            s.delivery = archive(1);
+        }
+        assert!(issues(&j).is_empty());
     }
 }

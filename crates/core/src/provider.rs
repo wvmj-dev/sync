@@ -127,7 +127,20 @@ pub trait StorageProvider: Send + Sync {
 
     async fn list_children(&self, folder_id: &str) -> ProviderResult<Vec<RemoteEntry>>;
 
+    /// Item pelo ID; `None` se não existir ou estiver na lixeira. O `hash` pode faltar
+    /// quando calculá-lo exigiria ler o arquivo (provedor local).
     async fn get(&self, id: &str) -> ProviderResult<Option<RemoteEntry>>;
+
+    /// Só os nomes dos itens de uma pasta — mais barato que [`Self::list_children`] quando
+    /// o provedor teria de ler o conteúdo para calcular hashes.
+    async fn child_names(&self, folder_id: &str) -> ProviderResult<Vec<String>> {
+        Ok(self
+            .list_children(folder_id)
+            .await?
+            .into_iter()
+            .map(|c| c.name)
+            .collect())
+    }
 
     async fn create_folder(&self, parent_id: &str, name: &str) -> ProviderResult<RemoteEntry>;
 

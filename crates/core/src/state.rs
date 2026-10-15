@@ -14,7 +14,8 @@ use crate::fsutil::create_private_file;
 
 /// Migrações sequenciais; a posição no array é a versão (`PRAGMA user_version`).
 /// Nunca altere uma migração já publicada — acrescente outra.
-const MIGRATIONS: &[&str] = &[r"
+const MIGRATIONS: &[&str] = &[
+    r"
     CREATE TABLE file_index (
         job_id          TEXT    NOT NULL,
         path            TEXT    NOT NULL,
@@ -60,10 +61,48 @@ const MIGRATIONS: &[&str] = &[r"
         cursor      TEXT,
         updated_at  TEXT NOT NULL
     );
-"];
+",
+    // 2: versões de tarefas compactadas (RN-50 a RN-55, RN-59). A tabela `backups`
+    // da migração 1 nunca foi usada.
+    r"
+    DROP TABLE IF EXISTS backups;
+    CREATE TABLE archives (
+        id           TEXT    PRIMARY KEY,
+        job_id       TEXT    NOT NULL,
+        account_id   TEXT    NOT NULL,
+        dest_path    TEXT    NOT NULL,
+        remote_id    TEXT    NOT NULL,
+        name         TEXT    NOT NULL,
+        format       TEXT    NOT NULL,
+        size         INTEGER NOT NULL,
+        hash         TEXT,
+        fingerprint  TEXT    NOT NULL,
+        created_at   TEXT    NOT NULL
+    );
+    CREATE INDEX archives_by_destination ON archives (job_id, account_id, dest_path, created_at DESC);
+",
+];
 
 pub struct StateDb {
     conn: Connection,
+}
+
+/// Uma versão criada por uma tarefa compactada (RN-50). A retenção só considera o que
+/// está registrado aqui — nunca arquivos que a tarefa não criou (RN-55).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArchiveRecord {
+    pub id: Uuid,
+    pub job_id: Uuid,
+    pub account_id: Uuid,
+    pub dest_path: String,
+    pub remote_id: String,
+    pub name: String,
+    pub format: String,
+    pub size: u64,
+    pub hash: Option<String>,
+    /// RN-59: resumo do conteúdo das fontes (caminhos, tamanhos, datas).
+    pub fingerprint: String,
+    pub created_at: DateTime<Utc>,
 }
 
 fn ts(t: DateTime<Utc>) -> String {
@@ -212,11 +251,16 @@ impl StateDb {
         Ok(())
     }
 
+    /// Esquece o índice e as versões registradas. Os arquivos no destino ficam como estão.
     pub fn clear_job(&mut self, job_id: Uuid) -> CoreResult<()> {
-        self.conn.execute(
-            "DELETE FROM file_index WHERE job_id = ?1",
-            params![job_id.to_string()],
-        )?;
+        let tx = self.conn.transaction()?;
+        for table in ["file_index", "archives"] {
+            tx.execute(
+                &format!("DELETE FROM {table} WHERE job_id = ?1"),
+                params![job_id.to_string()],
+            )?;
+        }
+        tx.commit()?;
         Ok(())
     }
 
@@ -270,6 +314,75 @@ impl StateDb {
             ],
             |r| r.get(0),
         )?)
+    }
+
+    // ---- Versões de tarefas compactadas ----
+
+    pub fn insert_archive(&self, r: &ArchiveRecord) -> CoreResult<()> {
+        self.conn.execute(
+            "INSERT INTO archives
+               (id, job_id, account_id, dest_path, remote_id, name, format, size, hash, fingerprint, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                r.id.to_string(),
+                r.job_id.to_string(),
+                r.account_id.to_string(),
+                r.dest_path,
+                r.remote_id,
+                r.name,
+                r.format,
+                i64::try_from(r.size).unwrap_or(i64::MAX),
+                r.hash,
+                r.fingerprint,
+                ts(r.created_at),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Versões de uma tarefa num destino, da mais nova para a mais antiga.
+    pub fn list_archives(
+        &self,
+        job_id: Uuid,
+        account_id: Uuid,
+        dest_path: &str,
+    ) -> CoreResult<Vec<ArchiveRecord>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT id, job_id, account_id, dest_path, remote_id, name, format, size, hash, fingerprint, created_at
+             FROM archives WHERE job_id = ?1 AND account_id = ?2 AND dest_path = ?3
+             ORDER BY created_at DESC",
+        )?;
+        let rows = stmt.query_map(
+            params![job_id.to_string(), account_id.to_string(), dest_path],
+            |r| {
+                let id: String = r.get(0)?;
+                let job: String = r.get(1)?;
+                let account: String = r.get(2)?;
+                let created: String = r.get(10)?;
+                Ok(ArchiveRecord {
+                    id: id.parse().map_err(|_| bad_value("id", &id))?,
+                    job_id: job.parse().map_err(|_| bad_value("tarefa", &job))?,
+                    account_id: account.parse().map_err(|_| bad_value("conta", &account))?,
+                    dest_path: r.get(3)?,
+                    remote_id: r.get(4)?,
+                    name: r.get(5)?,
+                    format: r.get(6)?,
+                    size: u64::try_from(r.get::<_, i64>(7)?).unwrap_or(0),
+                    hash: r.get(8)?,
+                    fingerprint: r.get(9)?,
+                    created_at: parse_ts(&created)?,
+                })
+            },
+        )?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    pub fn delete_archive(&self, id: Uuid) -> CoreResult<()> {
+        self.conn.execute(
+            "DELETE FROM archives WHERE id = ?1",
+            params![id.to_string()],
+        )?;
+        Ok(())
     }
 
     pub fn last_run(&self, job_id: Uuid) -> CoreResult<Option<RunRecord>> {
@@ -358,6 +471,35 @@ mod tests {
         let last = db.last_run(job).unwrap().unwrap();
         assert_eq!(last.status, RunStatus::Success);
         assert_eq!(last.stats.unwrap()["uploads"], 2);
+    }
+
+    #[test]
+    fn versoes_de_tarefa_compactada() {
+        let db = StateDb::open_in_memory().unwrap();
+        let (job, account) = (Uuid::new_v4(), Uuid::new_v4());
+        let record = |name: &str, minutes: i64| ArchiveRecord {
+            id: Uuid::new_v4(),
+            job_id: job,
+            account_id: account,
+            dest_path: "Backups".into(),
+            remote_id: format!("id-{name}"),
+            name: name.into(),
+            format: "tar_zst".into(),
+            size: 10,
+            hash: Some("h".into()),
+            fingerprint: "f".into(),
+            created_at: Utc::now() - chrono::Duration::minutes(minutes),
+        };
+        let old = record("velha", 60);
+        db.insert_archive(&old).unwrap();
+        db.insert_archive(&record("nova", 1)).unwrap();
+        let listed = db.list_archives(job, account, "Backups").unwrap();
+        assert_eq!(listed[0].name, "nova");
+        assert_eq!(listed.len(), 2);
+        // Outro destino não se mistura.
+        assert!(db.list_archives(job, account, "Outra").unwrap().is_empty());
+        db.delete_archive(old.id).unwrap();
+        assert_eq!(db.list_archives(job, account, "Backups").unwrap().len(), 1);
     }
 
     #[test]

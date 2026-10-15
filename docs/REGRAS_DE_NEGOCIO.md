@@ -12,12 +12,12 @@ estão implementadas — o estado de cada fase está em [ARQUITETURA.md §13](AR
 |---|---|
 | **Conta** | Um destino de armazenamento autenticado: uma conta Google Drive ou uma pasta local (HD externo, NAS montado). |
 | **Pasta raiz do app** | Pasta `Syncly/` criada pelo app na conta. Tudo que o app grava fica dentro dela. |
-| **Tarefa** | Conjunto de **fontes** (pastas e/ou arquivos) + o que fazer com elas: **sincronizar** e/ou **fazer backup**, cada um com seu agendamento. |
+| **Tarefa** | Conjunto de **fontes** (pastas e/ou arquivos) + **destino** + **como enviar**: arquivo por arquivo (sincronização) ou compactado (versões), com um agendamento. |
 | **Fonte** | Caminho absoluto local de uma pasta ou arquivo incluído na tarefa. |
 | **Índice** | Último estado sincronizado de cada arquivo (tamanho, mtime, MD5 local, ID e MD5 remotos). |
 | **Plano** | Lista de ações calculada antes de executar (enviar, atualizar, mover para lixeira…). |
-| **Execução** | Uma rodada de sincronização, backup, restauração ou compactação, com status e estatísticas. |
-| **Backup** | Arquivo compactado (`.tar.zst`, opcionalmente `.age`) representando as fontes num momento. |
+| **Execução** | Uma rodada de uma tarefa (sincronização ou envio compactado), restauração ou compactação, com status e estatísticas. |
+| **Versão** | Arquivo compactado (`.zip`, `.tar.gz`, `.tar.zst` ou `.tar`) com as fontes de uma tarefa num momento — o **backup**. Local ou remoto conforme a conta de destino. |
 
 ## 2. Contas
 
@@ -37,8 +37,8 @@ estão implementadas — o estado de cada fase está em [ARQUITETURA.md §13](AR
 - **RN-12** — Fontes não podem ser pastas de sistema (`/`, `/proc`, `/sys`, `/dev`, `/run`) nem estar dentro das pastas de dados/config do próprio app. Se uma fonte **contém** as pastas do app (ex.: a pasta pessoal inteira), elas são puladas automaticamente.
 - **RN-13** — Uma fonte não pode estar dentro de outra fonte da mesma tarefa.
 - **RN-14** — O **nome final** (basename) de cada fonte deve ser único na tarefa, pois vira a pasta/arquivo de primeiro nível no destino. Ex.: `~/Documentos` e `~/notas.md` → `Syncly/<destino>/Documentos/…` e `Syncly/<destino>/notas.md`.
-- **RN-15** — Toda tarefa precisa de pelo menos uma ação: sincronização e/ou backup.
-- **RN-16** — Destino de sincronização: conta existente + caminho relativo à pasta raiz, com 1 a 32 componentes, sem `.`/`..`, sem caracteres de controle, até 255 bytes por componente. A pasta de primeiro nível `Backups` é reservada (RN-51).
+- **RN-15** — Toda tarefa tem um destino e uma forma de envio: **arquivo por arquivo** (seção 5, padrão) ou **compactado** (seção 7).
+- **RN-16** — Destino: conta existente + caminho relativo à pasta raiz, com 1 a 32 componentes, sem `.`/`..`, sem caracteres de controle, até 255 bytes por componente.
 - **RN-17** — Duas tarefas não podem ter destinos sobrepostos na mesma conta (iguais ou um dentro do outro) — cada pasta remota tem um único "dono".
 - **RN-18** — Tarefa desativada não roda (nem manual nem agendada) e seus timers são removidos.
 - **RN-19** — Com destino numa conta local, a pasta de destino não pode ficar dentro de uma fonte da tarefa, nem conter uma fonte — senão a cada execução a cópia copiaria a si mesma.
@@ -79,7 +79,7 @@ estão implementadas — o estado de cada fase está em [ARQUITETURA.md §13](AR
 | — | — | existe | desconhecido | **nunca tocar** | **nunca tocar** |
 | — | existe | — | apagado nos dois lados | limpar índice | limpar índice |
 
-- **RN-30** — O planejador é uma função pura `(local, índice, remoto, modo) → plano` e é a **única** fonte de decisões.
+- **RN-30** — O planejador é uma função pura `(local, índice, remoto, modo) → plano` e é a **única** fonte de decisões. No envio compactado (seção 7), as decisões também são funções puras: guarda (`evaluate_archive`), nome e impressão digital da versão, e retenção.
 - **RN-31** — **O app nunca altera nem apaga um item remoto que ele não sabe que sincronizou** (sem entrada no índice).
 - **RN-32** — Pastas: criadas antes dos arquivos (ordem de profundidade). No modo Espelho, uma pasta só vai para a lixeira se **todo** o seu conteúdo remoto também for para a lixeira no mesmo plano.
 - **RN-33** — Tipos divergentes (arquivo local × pasta remota com o mesmo nome, ou o inverso) → item ignorado com aviso.
@@ -93,24 +93,37 @@ estão implementadas — o estado de cada fase está em [ARQUITETURA.md §13](AR
 ## 6. Proteções (guardas)
 
 - **RN-40** — Fonte inexistente ou ilegível → execução **abortada**. A tarefa é revalidada antes de cada execução (o `config.toml` pode ter sido editado à mão).
-- **RN-41** — Fonte **vazia** enquanto o índice tem arquivos dela → execução **abortada** (protege contra HD externo desmontado: o ponto de montagem existe, mas vazio).
-- **RN-42** — Plano que move para a lixeira mais de **50 arquivos** ou mais de **25 %** dos arquivos indexados exige **confirmação explícita**. Valores configuráveis por tarefa (1–100 %).
+- **RN-41** — Fonte **vazia** enquanto o índice tem arquivos dela (ou, no envio compactado, enquanto já há versões no destino) → execução **abortada** (protege contra HD externo desmontado: o ponto de montagem existe, mas vazio).
+- **RN-42** — Plano que move para a lixeira mais de **50 arquivos** ou mais de **25 %** dos arquivos indexados exige **confirmação explícita**. Valores configuráveis por tarefa (1–100 %). Não se aplica ao envio compactado, que só manda para a lixeira versões antigas que ele mesmo criou (RN-55).
 - **RN-43** — Execuções agendadas **nunca** confirmam sozinhas: se a guarda pedir confirmação, a execução fica *aguardando confirmação* e o usuário é notificado.
 - **RN-44** — Não existe exclusão definitiva. Remoto: lixeira do Drive (recuperável por 30 dias). Local (conta local e restaurações): pasta `.syncly-trash/` ou lixeira do sistema.
 - **RN-45** — Na CLI, planos que exigem confirmação só rodam com `--confirm`.
 - **RN-46** — **Reserva de espaço**: antes de enviar, o app consulta a cota. Se o espaço livre após o envio ficar abaixo de **1 GiB** (configurável), a execução é abortada — conta Google cheia para de receber e-mails no Gmail.
 
-## 7. Backup *(planejado — fase 2b)*
+## 7. Envio compactado (versões)
 
-- **RN-50** — Backup = arquivo único `<tarefa>_<AAAAMMDD-HHMMSS>.tar.zst` (+ `.age` se criptografado), contendo as fontes (com os mesmos filtros da tarefa) e um `MANIFEST.json` (caminho, tamanho, mtime, sha256 de cada arquivo).
-- **RN-51** — Destinos: pasta local (absoluta, **fora** das fontes — senão o backup se incluiria) e/ou remoto em `Syncly/Backups/<tarefa>/`. Pelo menos um.
-- **RN-52** — O arquivo é escrito como `.partial`, verificado (sha256) e só então renomeado. Backup incompleto nunca aparece como válido.
-- **RN-53** — Antes de começar, o app checa espaço local (estimativa = tamanho total das fontes) e cota remota (RN-46).
-- **RN-54** — Retenção (padrão): últimos **3** + o mais recente de cada um dos **7** dias mais recentes que tiverem backup + idem para **4** semanas e **6** meses. Mínimo de 1 "últimos".
-- **RN-55** — A retenção só roda **depois** de um backup bem-sucedido e verificado, e nunca remove o backup mais recente. Remoções vão para a lixeira.
-- **RN-56** — Recuperação: o índice pode ser reconstruído a partir do destino (MD5 + `appProperties`), sem reenviar nada (adoção, tabela da seção 5).
+Em vez de copiar arquivo por arquivo, a tarefa junta as fontes num **único arquivo
+compactado** a cada execução e o envia ao destino, guardando versões anteriores. É o
+**backup** do app: remoto com uma conta Google, local com uma conta do tipo pasta (HD externo,
+NAS). Vale a pena para pastas com muitos arquivos pequenos (ex.: saves de jogos) —
+uma transferência só, em vez de milhares.
 
-### Restauração
+- **RN-50** — Versão = arquivo único `<tarefa>_<AAAA-MM-DD_HH-MM-SS>.<ext>` (hora local) no formato escolhido na tarefa (RN-60), com as fontes no primeiro nível (RN-14) e os mesmos filtros (RN-64). Nome já usado no destino ganha ` (2)`, ` (3)`… — nunca sobrescreve. O que não pôde ser lido fica de fora e a execução termina como *sucesso parcial* (RN-91). *(Planejado: `MANIFEST.json` com o sha256 de cada arquivo e `.age` se criptografado — seção 9.)*
+- **RN-51** — Destino: a pasta da tarefa (RN-16), em qualquer conta. As versões ficam lado a lado nessa pasta.
+- **RN-52** — O arquivo é montado num temporário do app (`~/.local/share/syncly/tmp/`), enviado com checksum conferido (RN-37) e só então registrado como versão. O temporário é apagado ao final — com sucesso, erro ou cancelamento — e sobras de uma execução interrompida são limpas na próxima. Versão incompleta nunca aparece como válida.
+- **RN-53** — Antes de compactar, o app checa o espaço no computador (estimativa = tamanho total das fontes + a reserva de RN-67); antes de enviar, a cota da conta com o tamanho real (RN-46).
+- **RN-54** — Retenção (padrão): últimas **3** + a mais recente de cada um dos **7** dias mais recentes que tiverem versão + idem para **4** semanas e **6** meses, em horário local. Configurável na tarefa; mínimo de 1 "últimas".
+- **RN-55** — A retenção só roda **depois** de uma versão nova enviada e verificada, nunca remove a mais recente e só considera versões **registradas pelo app** naquele destino — outros arquivos da pasta nunca entram. Versão renomeada, substituída ou removida fora do app é esquecida, não vai para a lixeira. Remoções vão para a lixeira (RN-44).
+- **RN-56** — Recuperação: o índice pode ser reconstruído a partir do destino (MD5 + `appProperties`), sem reenviar nada (adoção, tabela da seção 5). *(planejado)*
+- **RN-59** — Se nada mudou nas fontes desde a última versão (mesmos caminhos, tamanhos e datas, mesmo formato) e ela continua intacta no destino, a execução termina com sucesso **sem enviar nada**.
+
+As guardas da seção 6 valem aqui também: primeira execução com confirmação (RN-36), fonte
+ausente ou esvaziada (RN-40, RN-41), agendada nunca confirma sozinha (RN-43).
+
+### Restauração *(planejado — fase 2c)*
+
+Hoje dá para restaurar à mão: baixar a versão (tela **Arquivos**) e descompactar (tela
+**Compactar**, RN-65 e RN-66).
 
 - **RN-57** — Restauração vai, por padrão, para uma **pasta nova** (`restauracao-<tarefa>-<data>/`). Restaurar por cima exige confirmação, e os arquivos substituídos vão para a lixeira do sistema.
 - **RN-58** — Antes de extrair, o sha256 do arquivo é verificado. Entradas com caminho absoluto, `..`, links para fora do destino ou arquivos especiais são rejeitadas.
@@ -121,10 +134,10 @@ Tela **Compactar** e `syncly archive create|extract`.
 
 ### Compactar
 
-- **RN-60** — Ação avulsa "Compactar": até 32 pastas/arquivos → `.zip` (padrão na interface; abre em qualquer sistema), `.tar.gz` (padrão no Linux), `.tar.zst` (mais rápido e menor) ou `.tar` (sem compressão). Backups (RN-50) usam `.tar.zst`. Nome padrão: o da única entrada, ou `arquivos`.
+- **RN-60** — Ação avulsa "Compactar": até 32 pastas/arquivos → `.zip` (padrão na interface; abre em qualquer sistema), `.tar.gz` (padrão no Linux), `.tar.zst` (mais rápido e menor) ou `.tar` (sem compressão). Tarefas que enviam compactado (RN-50) usam o formato escolhido nelas. Nome padrão: o da única entrada, ou `arquivos`.
 - **RN-61** — Níveis padrão: zstd 3, gzip 6, deflate 6. No `.zip`, arquivos já comprimidos (jpg, png, mp4, zip, gz, 7z…) são armazenados sem recompressão. O bit de execução é preservado.
 - **RN-62** — O arquivo de saída não pode estar dentro das entradas e **nunca sobrescreve** um existente (`nome (2).zip`, `nome (2).tar.gz`…). É escrito num temporário e só ganha o nome final ao terminar — erro ou cancelamento não deixam arquivo pela metade.
-- **RN-63** — Criptografia só para `.tar.zst` (gera `.tar.zst.age`) — fase 2b.
+- **RN-63** — Criptografia só para `.tar.zst` (gera `.tar.zst.age`) — fase 2d.
 - **RN-64** — Valem os filtros da sincronização: lixo e temporários (RN-21) ficam de fora; **arquivos sensíveis** (RN-22) só entram se marcados; `.syncignore` é respeitado; links e arquivos especiais não entram; o que não pôde ser lido vira aviso. Se nada sobrar, nada é criado.
 
 ### Descompactar
@@ -133,18 +146,18 @@ Tela **Compactar** e `syncly archive create|extract`.
 - **RN-66** — Arquivos compactados vindos de fora são **entrada não confiável**. Entradas com caminho absoluto, `..`, nomes inválidos, links (simbólicos ou não) e arquivos especiais são **ignoradas** e listadas no resultado. Entradas repetidas não sobrescrevem a primeira. Só o bit de execução é aplicado — setuid/setgid nunca.
 - **RN-67** — Proteção contra "bomba de compressão" e disco cheio: compactar ou descompactar nunca deixa menos de **1 GiB** livre no disco; se fosse deixar, a operação para e nada fica pela metade.
 
-## 9. Criptografia *(planejado — fase 2b)*
+## 9. Criptografia *(planejado — fase 2d)*
 
-- **RN-70** — Opcional, por tarefa, aplicada a backups e compactações. A sincronização envia arquivos como estão (para serem visualizáveis no Drive).
+- **RN-70** — Opcional, por tarefa, aplicada a versões (seção 7) e compactações. A sincronização envia arquivos como estão (para serem visualizáveis no Drive).
 - **RN-71** — Formato `age` com chave X25519. A chave pública fica no `config.toml`; a privada, no keyring.
-- **RN-72** — Ativar criptografia exige **exportar a chave de recuperação** e confirmar que ela foi guardada. Sem ela, os backups são irrecuperáveis — o app avisa isso explicitamente.
-- **RN-73** — Backups automáticos usam só a chave pública; a privada só é lida na restauração.
-- **RN-74** — Cada backup registra a impressão digital da chave usada; trocar a chave não invalida backups antigos.
+- **RN-72** — Ativar criptografia exige **exportar a chave de recuperação** e confirmar que ela foi guardada. Sem ela, as versões criptografadas são irrecuperáveis — o app avisa isso explicitamente.
+- **RN-73** — Versões automáticas usam só a chave pública; a privada só é lida na restauração.
+- **RN-74** — Cada versão registra a impressão digital da chave usada; trocar a chave não invalida versões antigas.
 
 ## 10. Agendamento *(planejado — fase 3)*
 
 - **RN-80** — Opções: manual; a cada N horas (N ∈ {1, 2, 3, 4, 6, 8, 12}); diário às HH:MM; semanal (dia + HH:MM); avançado (expressão `OnCalendar` do systemd).
-- **RN-81** — Sincronização e backup de uma tarefa têm agendamentos independentes.
+- **RN-81** — Um agendamento por tarefa, qualquer que seja a forma de envio. Para sincronizar e também guardar versões das mesmas pastas, crie duas tarefas com destinos diferentes (RN-17).
 - **RN-82** — Expressão avançada: até 64 caracteres, apenas `[A-Za-z0-9 *-:/,.~]`, validada por `systemd-analyze calendar` antes de salvar.
 - **RN-83** — Execução perdida (computador desligado) roda no próximo boot/login.
 - **RN-84** — Se o keyring estiver bloqueado ou não houver rede, a execução fica **adiada**; notifica após 3 adiamentos seguidos.

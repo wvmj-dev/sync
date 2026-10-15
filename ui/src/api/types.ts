@@ -2,6 +2,19 @@
 
 export type SyncMode = "upload" | "mirror";
 
+/** RN-54. Vem do core com os mesmos nomes do config.toml (snake_case). */
+export interface Retention {
+  keep_last: number;
+  daily: number;
+  weekly: number;
+  monthly: number;
+}
+
+/** RN-50: arquivo por arquivo, ou tudo num arquivo compactado com versões. */
+export type Delivery =
+  | { kind: "files" }
+  | { kind: "archive"; format: ArchiveFormat; retention: Retention };
+
 export interface AppInfo {
   version: string;
   configFile: string;
@@ -43,6 +56,7 @@ export interface SyncSummary {
   accountId: string;
   accountLabel: string | null;
   path: string;
+  delivery: Delivery;
   mode: SyncMode;
   schedule: string;
 }
@@ -55,7 +69,6 @@ export interface JobSummary {
   exclude: string[];
   includeSensitive: boolean;
   sync: SyncSummary | null;
-  backupEnabled: boolean;
   lastRun: RunSummary | null;
 }
 
@@ -74,6 +87,8 @@ export interface RemoteItem {
 export interface SyncDraft {
   accountId: string;
   path: string;
+  delivery: Delivery;
+  /** Só vale para a entrega arquivo por arquivo. */
   mode: SyncMode;
 }
 
@@ -132,6 +147,23 @@ export interface PlanPreview {
   hashedFiles: number;
   durationMs: number;
   firstRun: boolean;
+  /** Presente quando a tarefa envia compactado; aí `stats` e `actions` ficam vazios. */
+  archive: ArchivePreview | null;
+}
+
+export interface ArchivePreview {
+  /** Nome que a versão teria se fosse criada agora. */
+  name: string;
+  format: ArchiveFormat;
+  files: number;
+  folders: number;
+  /** Tamanho antes de compactar. */
+  bytes: number;
+  /** RN-59: nada mudou desde a última versão. */
+  unchanged: boolean;
+  versions: number;
+  /** RN-54: versões que iriam para a lixeira depois do envio. */
+  toTrash: string[];
 }
 
 export interface RunProgress {
@@ -166,6 +198,19 @@ export interface RunReport {
   cancelled: boolean;
   aborted: string | null;
   durationMs: number;
+  /** Presente quando a tarefa envia compactado. */
+  archive: ArchiveRun | null;
+}
+
+export interface ArchiveRun {
+  /** `null` quando nada mudou (RN-59). */
+  name: string | null;
+  files: number;
+  bytesIn: number;
+  bytesOut: number;
+  unchanged: boolean;
+  /** Versões mantidas no destino depois da retenção. */
+  versions: number;
 }
 
 export type ArchiveFormat = "zip" | "tar" | "tar_gz" | "tar_zst";

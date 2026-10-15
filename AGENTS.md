@@ -8,8 +8,9 @@ detalhado fica em [`.agents/`](.agents/README.md) e deve ser lido **sob demanda*
 
 App desktop para sincronizar e fazer backup de pastas com o Google Drive (outros
 provedores depois). Tauri 2 + Rust (núcleo) + Vue 3/TypeScript (UI) + CLI `syncly`.
-Fases concluídas: **0, 1a, 1b e 2a** — sincronização (Drive e pasta local), transferências avulsas e
-compactação funcionando. Próximas: **1c** (status) e **2b** (backups). Roadmap em `docs/ARQUITETURA.md` §13.
+Fases concluídas: **0, 1a, 1b, 2a e 2b** — sincronização (Drive e pasta local), transferências avulsas,
+compactação e envio compactado com versões (backup) funcionando. Próximas: **2c** (restaurar versão)
+e **1c** (status). Roadmap em `docs/ARQUITETURA.md` §13.
 
 Fonte da verdade — leia antes de mudar comportamento:
 
@@ -21,15 +22,16 @@ Fonte da verdade — leia antes de mudar comportamento:
 
 Não presuma que algo existe só porque está nos docs — os docs descrevem o projeto completo.
 
-| Já funciona (fases 0, 1a e 1b) | Ainda **não** existe |
+| Já funciona (fases 0, 1a, 1b, 2a e 2b) | Ainda **não** existe |
 |---|---|
 | Domínio e validações; **executor** (`sync/executor.rs`) com progresso, cancelamento e histórico | Paralelizar a listagem remota (hoje uma pasta por vez) |
 | Varredura local com filtros, `.syncignore`, bloqueios e exclusões | Status / última modificação (RN-100 a RN-103) |
-| Planejador, guardas, política de retry, retenção (funções puras) | Backups, criptografia, restauração |
+| Planejador, guardas, política de retry, retenção (funções puras) | Restaurar versão, criptografia, manifesto |
 | Estado em SQLite, config TOML, trava por tarefa, logs em arquivo | Agendamento (systemd), notificações, bandeja |
 | `LocalProvider` e `GDriveProvider` (Drive: OAuth PKCE, keyring, limitador, retry, envio retomável) | Changes API, download/bidirecional |
 | **Prévia** de sincronização (CLI e UI); enviar/listar/baixar arquivos avulsos (`syncly remote`, tela Arquivos) | Testes de frontend |
 | Compactar/descompactar zip e tar (`core/src/archive/`, `syncly archive`, tela Compactar) | |
+| **Envio compactado** (`Delivery::Archive`, `service/src/delivery.rs`): versões com data, retenção, pula se nada mudou | |
 
 `docs/REGRAS_DE_NEGOCIO.md` marca como *(planejado)* as seções e regras que ainda não existem.
 
@@ -91,9 +93,11 @@ Violar qualquer uma é bug de segurança, mesmo que o código "funcione".
 5. **Frontend:** proibido `v-html`; `invoke` só dentro de `ui/src/api/` (SEG-32).
 6. **`unsafe` proibido** (lint `forbid` no workspace).
 7. **Decisões de sincronização só no planejador** (`crates/core/src/sync/planner.rs`, RN-30).
-   O executor apenas aplica o plano.
-8. **Nunca tocar item remoto fora do índice** (RN-31); itens ilegíveis ou excluídos pelos
-   filtros nunca vão para a lixeira (RN-27, RN-28).
+   O executor apenas aplica o plano. No envio compactado, as decisões ficam em funções puras
+   (`guard::evaluate_archive`, `archive::versions`, `backup::retention`).
+8. **Nunca tocar item remoto fora do índice** (RN-31) — no envio compactado, fora das versões
+   registradas (RN-55); itens ilegíveis ou excluídos pelos filtros nunca vão para a lixeira
+   (RN-27, RN-28).
 9. **Testes nunca usam a conta Google real nem o `HOME` real**: use `tempfile`,
    `AppPaths::in_dir` e `LocalProvider`.
 

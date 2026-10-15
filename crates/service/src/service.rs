@@ -7,8 +7,8 @@ use std::time::Instant;
 use syncly_core::CoreError;
 use syncly_core::config::{AppConfig, Settings};
 use syncly_core::domain::{
-    Account, AccountKind, Destination, GuardLimits, Job, Plan, RelPath, RunKind, RunStatus,
-    RunTrigger, Schedule, SkipReason, SyncSettings, ValidationContext,
+    Account, AccountKind, Delivery, Destination, GuardLimits, Job, Plan, RelPath, RunKind,
+    RunStatus, RunTrigger, Schedule, SkipReason, SyncSettings, ValidationContext,
 };
 use syncly_core::filters::Filter;
 use syncly_core::lock::JobLock;
@@ -26,6 +26,7 @@ use syncly_gdrive::HttpClient;
 use syncly_gdrive::auth::{ClientConfigError, load_client};
 use uuid::Uuid;
 
+use crate::delivery::ArchiveExec;
 use crate::dto::{
     AccountSummary, ActionView, AppInfo, JobDraft, JobSummary, MAX_PREVIEW_ACTIONS,
     MAX_PREVIEW_WARNINGS, PlanPreview, RunReport, SyncSummary, human_bytes,
@@ -48,7 +49,15 @@ pub struct Service {
     pub(crate) archive_op: Mutex<Option<Arc<AtomicBool>>>,
 }
 
-/// Resultado da preparação de uma execução.
+/// Tarefa lida do disco e validada, com a conta de destino.
+pub(crate) struct Loaded {
+    pub job: Job,
+    pub sync: SyncSettings,
+    pub settings: Settings,
+    pub account: Account,
+}
+
+/// Resultado da preparação de uma execução arquivo por arquivo.
 struct Prepared {
     job: Job,
     sync: SyncSettings,
@@ -69,7 +78,7 @@ pub struct RunOptions {
 }
 
 /// Remove a execução do mapa ao terminar, mesmo com erro.
-struct RunningGuard<'a> {
+pub(crate) struct RunningGuard<'a> {
     map: &'a Mutex<HashMap<Uuid, Arc<AtomicBool>>>,
     id: Uuid,
 }
@@ -96,7 +105,7 @@ impl Drop for RunningGuard<'_> {
     }
 }
 
-fn elapsed_ms(started: Instant) -> u64 {
+pub(crate) fn elapsed_ms(started: Instant) -> u64 {
     u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
 
@@ -152,7 +161,7 @@ impl Service {
         Ok(out)
     }
 
-    fn state(&self) -> ServiceResult<StateDb> {
+    pub(crate) fn state(&self) -> ServiceResult<StateDb> {
         Ok(StateDb::open(&self.paths.state_db())?)
     }
 
@@ -240,15 +249,11 @@ impl Service {
                 return Err(ServiceError::NotFound("conta"));
             }
             for job in &mut config.jobs {
-                let uses_sync = job
+                if job
                     .sync
                     .as_ref()
-                    .is_some_and(|s| s.destination.account_id == id);
-                let uses_backup = job
-                    .backup
-                    .as_ref()
-                    .is_some_and(|b| b.remote_account_id == Some(id));
-                if uses_sync || uses_backup {
+                    .is_some_and(|s| s.destination.account_id == id)
+                {
                     job.enabled = false;
                 }
             }
@@ -280,6 +285,7 @@ impl Service {
             Some(s) => Some((
                 s.account_id,
                 RelPath::parse(&s.path).map_err(ServiceError::Invalid)?,
+                s.delivery,
                 s.mode,
             )),
             None => None,
@@ -290,8 +296,7 @@ impl Service {
             if draft.id.is_some() && existing.is_none() {
                 return Err(ServiceError::NotFound("tarefa"));
             }
-            let previous = existing.map(|i| config.jobs[i].clone());
-            let previous_sync = previous.as_ref().and_then(|j| j.sync.clone());
+            let previous_sync = existing.and_then(|i| config.jobs[i].sync.clone());
             let job = Job {
                 id,
                 name: draft.name.trim().to_string(),
@@ -299,8 +304,9 @@ impl Service {
                 sources: draft.sources.clone(),
                 exclude: clean_patterns(&draft.exclude),
                 include_sensitive: draft.include_sensitive,
-                sync: sync.map(|(account_id, path, mode)| SyncSettings {
+                sync: sync.map(|(account_id, path, delivery, mode)| SyncSettings {
                     destination: Destination { account_id, path },
+                    delivery,
                     mode,
                     schedule: previous_sync
                         .as_ref()
@@ -309,7 +315,6 @@ impl Service {
                         .as_ref()
                         .map_or(GuardLimits::default(), |s| s.guard),
                 }),
-                backup: previous.and_then(|j| j.backup),
             };
             match existing {
                 Some(i) => config.jobs[i] = job,
@@ -338,15 +343,14 @@ impl Service {
 
     // ---- Sincronização ----
 
-    /// Varre, lista o destino, planeja e avalia as guardas — sem alterar nada.
-    /// Compartilhado pela prévia e pela execução, para as duas nunca divergirem.
-    async fn prepare(&self, id: Uuid) -> ServiceResult<Prepared> {
+    /// Lê e valida a tarefa. O config.toml pode ter sido editado à mão: valida antes de
+    /// tocar em qualquer arquivo.
+    pub(crate) fn load_job(&self, id: Uuid) -> ServiceResult<Loaded> {
         let config = self.load()?;
         let job = config
             .job(id)
             .cloned()
             .ok_or(ServiceError::NotFound("tarefa"))?;
-        // O config.toml pode ter sido editado à mão: valida antes de tocar em qualquer arquivo.
         let app_dirs = self.paths.app_dirs();
         let mut issues = job.validate(&ValidationContext {
             app_dirs: &app_dirs,
@@ -356,12 +360,29 @@ impl Service {
             return Err(CoreError::Invalid(issues).into());
         }
         let sync = job.sync.clone().ok_or_else(|| {
-            ServiceError::Invalid("esta tarefa não tem sincronização configurada".into())
+            ServiceError::Invalid("esta tarefa não tem destino configurado".into())
         })?;
         let account = config
             .account(sync.destination.account_id)
             .cloned()
             .ok_or(ServiceError::NotFound("conta de destino"))?;
+        Ok(Loaded {
+            job,
+            sync,
+            settings: config.settings,
+            account,
+        })
+    }
+
+    /// Varre, lista o destino, planeja e avalia as guardas — sem alterar nada.
+    /// Compartilhado pela prévia e pela execução, para as duas nunca divergirem.
+    async fn prepare(&self, loaded: Loaded) -> ServiceResult<Prepared> {
+        let Loaded {
+            job,
+            sync,
+            settings,
+            account,
+        } = loaded;
         let provider = self.provider_for(&account).await?;
 
         let state = self.state()?;
@@ -410,7 +431,7 @@ impl Service {
         Ok(Prepared {
             job,
             sync,
-            settings: config.settings,
+            settings,
             provider,
             scan,
             remote,
@@ -423,7 +444,13 @@ impl Service {
     /// Prévia: o que uma execução faria agora.
     pub async fn preview_job(&self, id: Uuid) -> ServiceResult<PlanPreview> {
         let started = Instant::now();
-        let p = self.prepare(id).await?;
+        let loaded = self.load_job(id)?;
+        if let Delivery::Archive { format, retention } = loaded.sync.delivery {
+            return self
+                .preview_archive(loaded, format, retention, started)
+                .await;
+        }
+        let p = self.prepare(loaded).await?;
         let warnings = p
             .scan
             .warnings
@@ -460,6 +487,7 @@ impl Service {
             hashed_files: p.scan.hashed_files,
             duration_ms: elapsed_ms(started),
             first_run: p.first_run,
+            archive: None,
         })
     }
 
@@ -477,63 +505,31 @@ impl Service {
         let cancel = Arc::new(AtomicBool::new(false));
         let _running = RunningGuard::register(&self.running, id, cancel.clone());
 
-        let p = self.prepare(id).await?;
+        let loaded = self.load_job(id)?;
         // RN-18
-        if !p.job.enabled {
+        if !loaded.job.enabled {
             return Err(ServiceError::Invalid("a tarefa está desativada".into()));
         }
-        let state = self.state()?;
-        match &p.verdict {
-            GuardVerdict::Abort(reasons) => {
-                let run = state.start_run(id, RunKind::Sync, options.trigger)?;
-                state.finish_run(run, RunStatus::Aborted, None, Some(&reasons.join("; ")))?;
-                return Err(ServiceError::Invalid(format!(
-                    "execução bloqueada: {}",
-                    reasons.join("; ")
-                )));
-            }
-            // RN-43: execução agendada nunca confirma sozinha.
-            GuardVerdict::NeedsConfirmation(reasons)
-                if options.trigger == RunTrigger::Scheduled =>
-            {
-                let run = state.start_run(id, RunKind::Sync, options.trigger)?;
-                state.finish_run(
-                    run,
-                    RunStatus::AwaitingConfirmation,
-                    None,
-                    Some(&reasons.join("; ")),
-                )?;
-                return Err(ServiceError::NeedsConfirmation(reasons.clone()));
-            }
-            GuardVerdict::NeedsConfirmation(reasons) if !options.confirm => {
-                return Err(ServiceError::NeedsConfirmation(reasons.clone()));
-            }
-            _ => {}
+        if let Delivery::Archive { format, retention } = loaded.sync.delivery {
+            let exec = ArchiveExec {
+                format,
+                retention,
+                options,
+                cancel: &cancel,
+                progress: &progress,
+                started,
+            };
+            return self.run_archive(loaded, exec).await;
         }
-
-        // RN-46: reserva de espaço na conta (o Gmail para de receber e-mails se encher).
-        let needed = p.plan.stats.bytes_to_send;
-        if needed > 0
-            && let Some(free) = p
-                .provider
-                .quota()
-                .await
-                .map_err(CoreError::from)?
-                .and_then(|q| q.free())
+        let p = self.prepare(loaded).await?;
+        let state = self.state()?;
+        check_verdict(&state, id, RunKind::Sync, &p.verdict, options)?;
+        if let Some(msg) =
+            quota_shortfall(p.provider.as_ref(), &p.settings, p.plan.stats.bytes_to_send).await?
         {
-            let reserve = p.settings.min_free_space_mib.saturating_mul(1024 * 1024);
-            if free < needed.saturating_add(reserve) {
-                let msg = format!(
-                    "espaço insuficiente: a execução precisa de {} e a conta tem {} livres \
-                     (reserva mínima de {})",
-                    human_bytes(needed),
-                    human_bytes(free),
-                    human_bytes(reserve)
-                );
-                let run = state.start_run(id, RunKind::Sync, options.trigger)?;
-                state.finish_run(run, RunStatus::Aborted, None, Some(&msg))?;
-                return Err(ServiceError::Invalid(msg));
-            }
+            let run = state.start_run(id, RunKind::Sync, options.trigger)?;
+            state.finish_run(run, RunStatus::Aborted, None, Some(&msg))?;
+            return Err(ServiceError::Invalid(msg));
         }
 
         let run_id = state.start_run(id, RunKind::Sync, options.trigger)?;
@@ -599,6 +595,74 @@ impl Service {
     }
 }
 
+/// Aplica o veredito das guardas antes de qualquer alteração. Bloqueios e execuções
+/// agendadas que precisariam de confirmação ficam registrados no histórico.
+pub(crate) fn check_verdict(
+    state: &StateDb,
+    id: Uuid,
+    kind: RunKind,
+    verdict: &GuardVerdict,
+    options: RunOptions,
+) -> ServiceResult<()> {
+    match verdict {
+        GuardVerdict::Abort(reasons) => {
+            let run = state.start_run(id, kind, options.trigger)?;
+            state.finish_run(run, RunStatus::Aborted, None, Some(&reasons.join("; ")))?;
+            Err(ServiceError::Invalid(format!(
+                "execução bloqueada: {}",
+                reasons.join("; ")
+            )))
+        }
+        // RN-43: execução agendada nunca confirma sozinha.
+        GuardVerdict::NeedsConfirmation(reasons) if options.trigger == RunTrigger::Scheduled => {
+            let run = state.start_run(id, kind, options.trigger)?;
+            state.finish_run(
+                run,
+                RunStatus::AwaitingConfirmation,
+                None,
+                Some(&reasons.join("; ")),
+            )?;
+            Err(ServiceError::NeedsConfirmation(reasons.clone()))
+        }
+        // RN-36, RN-42
+        GuardVerdict::NeedsConfirmation(reasons) if !options.confirm => {
+            Err(ServiceError::NeedsConfirmation(reasons.clone()))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// RN-46: reserva de espaço na conta (o Gmail para de receber e-mails se encher).
+/// `Some(motivo)` se `needed` bytes não cabem mantendo a reserva.
+pub(crate) async fn quota_shortfall(
+    provider: &dyn StorageProvider,
+    settings: &Settings,
+    needed: u64,
+) -> ServiceResult<Option<String>> {
+    if needed == 0 {
+        return Ok(None);
+    }
+    let Some(free) = provider
+        .quota()
+        .await
+        .map_err(CoreError::from)?
+        .and_then(|q| q.free())
+    else {
+        return Ok(None);
+    };
+    let reserve = settings.min_free_space_mib.saturating_mul(1024 * 1024);
+    if free >= needed.saturating_add(reserve) {
+        return Ok(None);
+    }
+    Ok(Some(format!(
+        "espaço insuficiente: a execução precisa de {} e a conta tem {} livres \
+         (reserva mínima de {})",
+        human_bytes(needed),
+        human_bytes(free),
+        human_bytes(reserve)
+    )))
+}
+
 impl Service {
     /// Fábrica de provedores: o único lugar que conhece todos eles (ARQUITETURA.md §2).
     pub(crate) async fn provider_for(
@@ -635,9 +699,6 @@ pub(crate) fn account_summary(config: &AppConfig, account: &Account) -> AccountS
             j.sync
                 .as_ref()
                 .is_some_and(|s| s.destination.account_id == account.id)
-                || j.backup
-                    .as_ref()
-                    .is_some_and(|b| b.remote_account_id == Some(account.id))
         })
         .count();
     AccountSummary {
@@ -667,10 +728,10 @@ fn job_summary(config: &AppConfig, state: &StateDb, job: &Job) -> ServiceResult<
                 .account(s.destination.account_id)
                 .map(|a| a.label.clone()),
             path: s.destination.path.to_string(),
+            delivery: s.delivery,
             mode: s.mode,
             schedule: s.schedule.label(),
         }),
-        backup_enabled: job.backup.is_some(),
         last_run: state.last_run(job.id)?.map(Into::into),
     })
 }
@@ -711,6 +772,7 @@ mod tests {
                 sync: Some(SyncDraft {
                     account_id: account.id,
                     path: "/Backup/Docs/".into(),
+                    delivery: Delivery::Files,
                     mode: SyncMode::Mirror,
                 }),
             })
@@ -746,6 +808,7 @@ mod tests {
                 sync: Some(SyncDraft {
                     account_id: account.id,
                     path: "Backup".into(),
+                    delivery: Delivery::Files,
                     mode: SyncMode::Upload,
                 }),
             })
@@ -843,6 +906,7 @@ mod tests {
                 sync: Some(SyncDraft {
                     account_id: account.id,
                     path: "Docs".into(),
+                    delivery: Delivery::Files,
                     mode: SyncMode::Upload,
                 }),
             })

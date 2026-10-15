@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { ApiError, api, confirmDanger, errorMessage, onRunProgress } from "../api";
 import type { JobSummary, PlanPreview as Preview, RunProgress, RunReport } from "../api/types";
-import { formatBytes, formatDate, modeLabel, runStatusLabel } from "../utils/format";
+import { deliveryLabel, formatBytes, formatDate, runStatusLabel } from "../utils/format";
 import PlanPreview from "./PlanPreview.vue";
 
 const props = defineProps<{ job: JobSummary }>();
@@ -76,7 +76,11 @@ async function execute() {
         break;
       } catch (e) {
         if (e instanceof ApiError && e.code === "needs_confirmation" && !confirm) {
-          const message = `${e.message}\n\nOs arquivos serão enviados para "${props.job.sync?.accountLabel}: ${props.job.sync?.path}". Nada é apagado no seu computador.`;
+          const what =
+            props.job.sync?.delivery.kind === "archive"
+              ? "Um arquivo compactado será enviado"
+              : "Os arquivos serão enviados";
+          const message = `${e.message}\n\n${what} para "${props.job.sync?.accountLabel}: ${props.job.sync?.path}". Nada é apagado no seu computador.`;
           if (!(await confirmDanger(message, "Executar"))) break;
           confirm = true;
           continue;
@@ -106,7 +110,7 @@ async function cancel() {
           <span v-if="!job.enabled" class="badge">desativada</span>
         </h2>
         <p v-if="job.sync" class="muted">
-          {{ modeLabel[job.sync.mode] }} →
+          {{ deliveryLabel(job.sync) }} →
           {{ job.sync.accountLabel ?? "conta removida" }}: <code>{{ job.sync.path }}</code>
           · {{ job.sync.schedule }}
         </p>
@@ -166,10 +170,21 @@ async function cancel() {
         <div>
           <strong>{{ runStatusLabel[result.status] }}</strong>
           em {{ (result.durationMs / 1000).toFixed(1) }} s —
-          {{ result.uploaded }} enviados, {{ result.updated }} atualizados,
-          {{ result.foldersCreated }} pastas criadas<template v-if="result.trashed">,
-            {{ result.trashed }} na lixeira</template>
-          ({{ formatBytes(result.bytesSent) }}).
+          <template v-if="result.archive?.unchanged">
+            nada mudou desde a última versão; nada foi enviado.
+          </template>
+          <template v-else-if="result.archive">
+            <code>{{ result.archive.name }}</code> enviado ({{ result.archive.files }} arquivo(s),
+            {{ formatBytes(result.archive.bytesIn) }} → {{ formatBytes(result.archive.bytesOut) }}).
+            {{ result.archive.versions }} versão(ões) no destino<template v-if="result.trashed">,
+              {{ result.trashed }} antiga(s) na lixeira</template>.
+          </template>
+          <template v-else>
+            {{ result.uploaded }} enviados, {{ result.updated }} atualizados,
+            {{ result.foldersCreated }} pastas criadas<template v-if="result.trashed">,
+              {{ result.trashed }} na lixeira</template>
+            ({{ formatBytes(result.bytesSent) }}).
+          </template>
           <p v-if="result.aborted" class="small">Motivo: {{ result.aborted }}</p>
           <p v-if="result.unstable" class="small">
             {{ result.unstable }} arquivo(s) mudaram durante o envio e serão enviados de novo na

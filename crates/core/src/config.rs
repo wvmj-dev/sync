@@ -196,12 +196,6 @@ impl AppConfig {
             {
                 issues.push(ValidationIssue::new(&label, "conta de destino não existe"));
             }
-            if let Some(remote) = job.backup.as_ref().and_then(|b| b.remote_account_id)
-                && job.enabled
-                && self.account(remote).is_none()
-            {
-                issues.push(ValidationIssue::new(&label, "conta do backup não existe"));
-            }
         }
 
         for job in &self.jobs {
@@ -238,7 +232,7 @@ impl AppConfig {
 mod tests {
     use super::*;
     use crate::domain::{
-        AccountKind, Destination, GuardLimits, RelPath, Schedule, SyncMode, SyncSettings,
+        AccountKind, Delivery, Destination, GuardLimits, RelPath, Schedule, SyncMode, SyncSettings,
     };
 
     fn sample() -> AppConfig {
@@ -261,13 +255,13 @@ mod tests {
                     account_id: account.id,
                     path: RelPath::parse("Docs").unwrap(),
                 },
+                delivery: Delivery::Files,
                 mode: SyncMode::Mirror,
                 schedule: Schedule::Daily {
                     at: "02:00".to_string().try_into().unwrap(),
                 },
                 guard: GuardLimits::default(),
             }),
-            backup: None,
         };
         AppConfig {
             accounts: vec![account],

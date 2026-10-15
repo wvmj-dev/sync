@@ -2,14 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { api, errorMessage, onArchiveProgress, pickArchive, pickFiles, pickFolder } from "../api";
 import type { ArchiveFormat, ArchiveProgress, CompressResult, ExtractResult } from "../api/types";
-import { formatBytes } from "../utils/format";
-
-const formats: { value: ArchiveFormat; label: string; hint: string }[] = [
-  { value: "zip", label: "ZIP", hint: "abre em qualquer sistema" },
-  { value: "tar_gz", label: "TAR.GZ", hint: "padrão no Linux" },
-  { value: "tar_zst", label: "TAR.ZST", hint: "mais rápido e menor" },
-  { value: "tar", label: "TAR", hint: "sem compressão" },
-];
+import { archiveFormats as formats, formatBytes } from "../utils/format";
 
 // Compactar
 const inputs = ref<string[]>([]);

@@ -7,64 +7,22 @@
 
 mod create;
 mod extract;
+mod versions;
 
 use std::io::{self, Read};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 pub use create::{CreateReport, CreateRequest, create};
 pub use extract::{ExtractReport, ExtractRequest, SkippedEntry, extract};
+pub use versions::{fingerprint, version_name};
 
+pub use crate::domain::ArchiveFormat;
 use crate::domain::rel_path::validate_name;
 
 /// RN-67: espaço que precisa sobrar no disco ao compactar ou descompactar.
 pub const DISK_RESERVE_BYTES: u64 = 1024 * 1024 * 1024;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ArchiveFormat {
-    /// Compatível com tudo (Windows, macOS, Linux).
-    Zip,
-    /// Sem compressão.
-    Tar,
-    /// Padrão no Linux.
-    TarGz,
-    /// Mais rápido e menor.
-    TarZst,
-}
-
-impl ArchiveFormat {
-    pub const ALL: [Self; 4] = [Self::Zip, Self::Tar, Self::TarGz, Self::TarZst];
-
-    /// Extensão sem o ponto inicial.
-    pub fn extension(self) -> &'static str {
-        match self {
-            Self::Zip => "zip",
-            Self::Tar => "tar",
-            Self::TarGz => "tar.gz",
-            Self::TarZst => "tar.zst",
-        }
-    }
-
-    /// Identifica pelo nome do arquivo. Retorna o formato e o nome sem a extensão.
-    pub fn detect(file_name: &str) -> Option<(Self, &str)> {
-        let lower = file_name.to_ascii_lowercase();
-        let known = [
-            (".tar.gz", Self::TarGz),
-            (".tgz", Self::TarGz),
-            (".tar.zst", Self::TarZst),
-            (".tzst", Self::TarZst),
-            (".tar", Self::Tar),
-            (".zip", Self::Zip),
-        ];
-        known.into_iter().find_map(|(ext, format)| {
-            lower
-                .ends_with(ext)
-                .then(|| (format, &file_name[..file_name.len() - ext.len()]))
-        })
-    }
-}
 
 /// Progresso de uma compactação/descompactação.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
@@ -155,31 +113,6 @@ fn temp_sibling(final_path: &std::path::Path) -> std::path::PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn detecta_formatos() {
-        assert_eq!(
-            ArchiveFormat::detect("Mundo.tar.gz"),
-            Some((ArchiveFormat::TarGz, "Mundo"))
-        );
-        assert_eq!(
-            ArchiveFormat::detect("x.TGZ"),
-            Some((ArchiveFormat::TarGz, "x"))
-        );
-        assert_eq!(
-            ArchiveFormat::detect("x.tar.zst"),
-            Some((ArchiveFormat::TarZst, "x"))
-        );
-        assert_eq!(
-            ArchiveFormat::detect("x.tar"),
-            Some((ArchiveFormat::Tar, "x"))
-        );
-        assert_eq!(
-            ArchiveFormat::detect("fotos.zip"),
-            Some((ArchiveFormat::Zip, "fotos"))
-        );
-        assert_eq!(ArchiveFormat::detect("x.rar"), None);
-    }
 
     #[test]
     fn rn66_caminhos_internos_perigosos_sao_rejeitados() {

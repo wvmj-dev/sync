@@ -2,6 +2,7 @@
 //! e só trocam DTOs com ele (ver `dto`).
 
 mod archive;
+mod delivery;
 pub mod dto;
 mod error;
 mod google;

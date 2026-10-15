@@ -27,15 +27,24 @@ pub struct GuardInput<'a> {
     pub first_run: bool,
 }
 
+/// Entrada da guarda de uma tarefa que envia compactado. Ela só manda para a lixeira
+/// versões que ela mesma criou, então não há limite de exclusão em massa (RN-42).
+pub struct ArchiveGuardInput<'a> {
+    pub sources: &'a [SourceStatus],
+    /// Quantas entradas (arquivos e pastas) iriam para o arquivo compactado.
+    pub entries: usize,
+    /// Já existe versão enviada para este destino.
+    pub has_versions: bool,
+    /// RN-59: nada mudou desde a última versão — a execução não envia nada.
+    pub unchanged: bool,
+    /// RN-36: nenhuma execução bem-sucedida até agora.
+    pub first_run: bool,
+}
+
 pub fn evaluate(input: &GuardInput<'_>) -> GuardVerdict {
-    let mut abort = Vec::new();
+    let mut abort = unavailable_sources(input.sources);
     for s in input.sources {
-        if !s.exists {
-            // RN-40
-            abort.push(format!("a fonte '{}' não foi encontrada", s.path.display()));
-        } else if !s.readable {
-            abort.push(format!("a fonte '{}' não pôde ser lida", s.path.display()));
-        } else if s.files == 0 {
+        if s.exists && s.readable && s.files == 0 {
             // RN-41: ponto de montagem vazio parece "tudo apagado".
             let indexed = count_files(input.index, Some(&s.name));
             if indexed > 0 {
@@ -73,6 +82,50 @@ pub fn evaluate(input: &GuardInput<'_>) -> GuardVerdict {
     } else {
         GuardVerdict::NeedsConfirmation(confirm)
     }
+}
+
+/// Guarda de uma tarefa que envia compactado (RN-36, RN-40, RN-41, RN-43).
+pub fn evaluate_archive(input: &ArchiveGuardInput<'_>) -> GuardVerdict {
+    let mut abort = unavailable_sources(input.sources);
+    for s in input.sources {
+        // RN-41: com o disco desmontado, a versão nova sairia vazia.
+        if s.exists && s.readable && s.files == 0 && input.has_versions {
+            abort.push(format!(
+                "a fonte '{}' está vazia, mas as versões anteriores não — disco desmontado?",
+                s.path.display()
+            ));
+        }
+    }
+    if abort.is_empty() && input.entries == 0 {
+        abort.push(
+            "nada para compactar (tudo foi excluído pelos filtros ou não pôde ser lido)".into(),
+        );
+    }
+    if !abort.is_empty() {
+        return GuardVerdict::Abort(abort);
+    }
+    if input.first_run && !input.unchanged {
+        return GuardVerdict::NeedsConfirmation(vec![
+            "primeira execução desta tarefa — revise o que será enviado".into(),
+        ]);
+    }
+    GuardVerdict::Proceed
+}
+
+/// RN-40: fontes que sumiram ou não podem ser lidas bloqueiam a execução.
+fn unavailable_sources(sources: &[SourceStatus]) -> Vec<String> {
+    sources
+        .iter()
+        .filter_map(|s| {
+            if !s.exists {
+                Some(format!("a fonte '{}' não foi encontrada", s.path.display()))
+            } else if !s.readable {
+                Some(format!("a fonte '{}' não pôde ser lida", s.path.display()))
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 fn count_files(index: &BTreeMap<String, IndexEntry>, under: Option<&str>) -> usize {
@@ -204,5 +257,54 @@ mod tests {
             first_run: true,
         });
         assert!(matches!(v, GuardVerdict::NeedsConfirmation(_)));
+    }
+
+    fn archive(sources: &[SourceStatus], has_versions: bool, first_run: bool) -> GuardVerdict {
+        evaluate_archive(&ArchiveGuardInput {
+            sources,
+            entries: sources.iter().map(|s| s.files).sum(),
+            has_versions,
+            unchanged: false,
+            first_run,
+        })
+    }
+
+    #[test]
+    fn rn40_rn41_compactado_bloqueia_fonte_ausente_ou_esvaziada() {
+        assert!(matches!(
+            archive(&[source("Docs", false, 0)], true, false),
+            GuardVerdict::Abort(_)
+        ));
+        // Vazia com versões anteriores: provável disco desmontado.
+        assert!(matches!(
+            archive(&[source("Docs", true, 0), source("Fotos", true, 2)], true, false),
+            GuardVerdict::Abort(r) if r.len() == 1
+        ));
+        // Sem nada para compactar.
+        assert!(matches!(
+            archive(&[source("Docs", true, 0)], false, false),
+            GuardVerdict::Abort(_)
+        ));
+        assert_eq!(
+            archive(&[source("Docs", true, 3)], true, false),
+            GuardVerdict::Proceed
+        );
+    }
+
+    #[test]
+    fn rn36_compactado_pede_confirmacao_na_primeira_vez() {
+        assert!(matches!(
+            archive(&[source("Docs", true, 3)], false, true),
+            GuardVerdict::NeedsConfirmation(_)
+        ));
+        // Nada mudou: não há o que confirmar.
+        let v = evaluate_archive(&ArchiveGuardInput {
+            sources: &[source("Docs", true, 3)],
+            entries: 3,
+            has_versions: true,
+            unchanged: true,
+            first_run: true,
+        });
+        assert_eq!(v, GuardVerdict::Proceed);
     }
 }

@@ -167,9 +167,14 @@ nav {
 }
 
 .grid-2,
-.grid-3 {
+.grid-3,
+.grid-4 {
   display: grid;
   gap: 1rem;
+}
+
+.grid-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .grid-2 {
@@ -203,6 +208,10 @@ nav {
 
 .ok {
   color: var(--ok);
+}
+
+.error {
+  color: var(--danger);
 }
 
 .paths {

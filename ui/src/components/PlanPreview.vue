@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import type { PlanPreview } from "../api/types";
-import { actionLabel, formatBytes } from "../utils/format";
+import { actionLabel, formatBytes, formatLabel } from "../utils/format";
 
 const props = defineProps<{ preview: PlanPreview }>();
 
@@ -46,35 +46,77 @@ const stats = computed(() => {
       </div>
     </div>
 
-    <dl class="stats">
-      <div v-for="s in stats" :key="s.label">
-        <dt>{{ s.label }}</dt>
-        <dd>{{ s.value }}</dd>
-      </div>
-    </dl>
-    <p class="muted small">
-      Calculado em {{ preview.durationMs }} ms · {{ preview.hashedFiles }} arquivo(s) com hash
-      recalculado · modo {{ preview.mode === "upload" ? "envio" : "espelho" }}
-    </p>
+    <template v-if="preview.archive">
+      <p v-if="preview.archive.unchanged" class="muted">
+        Nada mudou desde a última versão — nada será enviado
+        ({{ preview.archive.versions }} versão(ões) no destino).
+      </p>
+      <template v-else>
+        <dl class="stats">
+          <div>
+            <dt>Nova versão</dt>
+            <dd><code>{{ preview.archive.name }}</code></dd>
+          </div>
+          <div>
+            <dt>Conteúdo</dt>
+            <dd>
+              {{ preview.archive.files }} arquivo(s), {{ preview.archive.folders }} pasta(s) ·
+              {{ formatBytes(preview.archive.bytes) }} antes de compactar
+            </dd>
+          </div>
+          <div>
+            <dt>Versões no destino</dt>
+            <dd>{{ preview.archive.versions }}</dd>
+          </div>
+          <div>
+            <dt>Lixeira</dt>
+            <dd>{{ preview.archive.toTrash.length }} versão(ões) antiga(s)</dd>
+          </div>
+        </dl>
+        <details v-if="preview.archive.toTrash.length">
+          <summary>Versões que vão para a lixeira depois do envio</summary>
+          <ul class="small">
+            <li v-for="n in preview.archive.toTrash" :key="n"><code>{{ n }}</code></li>
+          </ul>
+        </details>
+      </template>
+      <p class="muted small">
+        Calculado em {{ preview.durationMs }} ms · envio compactado
+        ({{ formatLabel(preview.archive.format) }})
+      </p>
+    </template>
 
-    <table v-if="visible.length" class="table">
-      <thead>
-        <tr>
-          <th>Ação</th>
-          <th>Caminho</th>
-          <th>Detalhe</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="(a, i) in visible" :key="i">
-          <td><span class="tag" :class="`tag-${a.kind}`">{{ actionLabel[a.kind] }}</span></td>
-          <td><code>{{ a.path }}</code></td>
-          <td class="muted">{{ a.detail ?? "" }}</td>
-        </tr>
-      </tbody>
-    </table>
-    <p v-else class="muted">Nada a fazer — tudo sincronizado.</p>
-    <p v-if="hidden > 0" class="muted small">… e mais {{ hidden }} ação(ões).</p>
+    <template v-else>
+      <dl class="stats">
+        <div v-for="s in stats" :key="s.label">
+          <dt>{{ s.label }}</dt>
+          <dd>{{ s.value }}</dd>
+        </div>
+      </dl>
+      <p class="muted small">
+        Calculado em {{ preview.durationMs }} ms · {{ preview.hashedFiles }} arquivo(s) com hash
+        recalculado · modo {{ preview.mode === "upload" ? "envio" : "espelho" }}
+      </p>
+
+      <table v-if="visible.length" class="table">
+        <thead>
+          <tr>
+            <th>Ação</th>
+            <th>Caminho</th>
+            <th>Detalhe</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="(a, i) in visible" :key="i">
+            <td><span class="tag" :class="`tag-${a.kind}`">{{ actionLabel[a.kind] }}</span></td>
+            <td><code>{{ a.path }}</code></td>
+            <td class="muted">{{ a.detail ?? "" }}</td>
+          </tr>
+        </tbody>
+      </table>
+      <p v-else class="muted">Nada a fazer — tudo sincronizado.</p>
+      <p v-if="hidden > 0" class="muted small">… e mais {{ hidden }} ação(ões).</p>
+    </template>
 
     <details v-if="preview.warnings.length">
       <summary>{{ preview.warnings.length }} aviso(s)</summary>

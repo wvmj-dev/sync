@@ -2,10 +2,24 @@
 import { computed, reactive } from "vue";
 import { RouterLink } from "vue-router";
 import { pickFiles, pickFolder } from "../api";
-import type { AccountSummary, JobDraft, JobSummary, SyncMode } from "../api/types";
+import type {
+  AccountSummary,
+  ArchiveFormat,
+  Delivery,
+  JobDraft,
+  JobSummary,
+  Retention,
+  SyncMode,
+} from "../api/types";
+import { archiveFormats } from "../utils/format";
 
 const props = defineProps<{ job: JobSummary | null; accounts: AccountSummary[] }>();
 const emit = defineEmits<{ save: [draft: JobDraft]; cancel: [] }>();
+
+// RN-54: mesmos padrões do core.
+const DEFAULT_RETENTION: Retention = { keep_last: 3, daily: 7, weekly: 4, monthly: 6 };
+const delivery = props.job?.sync?.delivery;
+const archived = delivery?.kind === "archive" ? delivery : null;
 
 const form = reactive({
   name: props.job?.name ?? "",
@@ -17,11 +31,24 @@ const form = reactive({
     props.job?.sync?.accountId ?? props.accounts[0]?.id ?? "",
   path: props.job?.sync?.path ?? "",
   mode: (props.job?.sync?.mode ?? "upload") as SyncMode,
+  delivery: (delivery?.kind ?? "files") as Delivery["kind"],
+  format: (archived?.format ?? "zip") as ArchiveFormat,
+  retention: { ...(archived?.retention ?? DEFAULT_RETENTION) },
 });
 
 const usableAccounts = computed(() => props.accounts);
+const retentionValid = computed(() => {
+  const r = form.retention;
+  const counts = [r.keep_last, r.daily, r.weekly, r.monthly];
+  return counts.every((n) => Number.isInteger(n) && n >= 0 && n <= 1000) && r.keep_last >= 1;
+});
 const canSave = computed(
-  () => form.name.trim() && form.sources.length > 0 && form.accountId && form.path.trim(),
+  () =>
+    form.name.trim() &&
+    form.sources.length > 0 &&
+    form.accountId &&
+    form.path.trim() &&
+    (form.delivery === "files" || retentionValid.value),
 );
 
 function addSources(paths: string[]) {
@@ -46,7 +73,15 @@ function submit() {
     sources: form.sources,
     exclude: form.exclude.split("\n"),
     includeSensitive: form.includeSensitive,
-    sync: { accountId: form.accountId, path: form.path, mode: form.mode },
+    sync: {
+      accountId: form.accountId,
+      path: form.path,
+      delivery:
+        form.delivery === "archive"
+          ? { kind: "archive", format: form.format, retention: { ...form.retention } }
+          : { kind: "files" },
+      mode: form.mode,
+    },
   });
 }
 </script>
@@ -94,6 +129,59 @@ function submit() {
     </div>
 
     <fieldset class="field">
+      <legend>Como enviar</legend>
+      <label class="choice">
+        <input v-model="form.delivery" type="radio" value="files" />
+        <span><strong>Arquivo por arquivo</strong> — o destino fica igual às pastas; da segunda vez em diante, só vai o que mudou.</span>
+      </label>
+      <label class="choice">
+        <input v-model="form.delivery" type="radio" value="archive" />
+        <span>
+          <strong>Compactado</strong> — tudo vira um único arquivo com data no nome
+          (ex.: <code>{{ form.name || "Tarefa" }}_2026-10-14_02-00-05.zip</code>), mantendo versões
+          anteriores. Bom para backup de pastas com muitos arquivos pequenos.
+        </span>
+      </label>
+    </fieldset>
+
+    <template v-if="form.delivery === 'archive'">
+      <label class="field">
+        <span>Formato</span>
+        <select v-model="form.format">
+          <option v-for="f in archiveFormats" :key="f.value" :value="f.value">
+            {{ f.label }} — {{ f.hint }}
+          </option>
+        </select>
+      </label>
+      <fieldset class="field">
+        <legend>Versões mantidas no destino</legend>
+        <div class="grid-4">
+          <label class="field">
+            <span>Últimas</span>
+            <input v-model.number="form.retention.keep_last" type="number" min="1" max="1000" />
+          </label>
+          <label class="field">
+            <span>Diárias</span>
+            <input v-model.number="form.retention.daily" type="number" min="0" max="1000" />
+          </label>
+          <label class="field">
+            <span>Semanais</span>
+            <input v-model.number="form.retention.weekly" type="number" min="0" max="1000" />
+          </label>
+          <label class="field">
+            <span>Mensais</span>
+            <input v-model.number="form.retention.monthly" type="number" min="0" max="1000" />
+          </label>
+        </div>
+        <small class="muted">
+          As que passarem disso vão para a <em>lixeira</em> do destino (recuperáveis), só depois que
+          a versão nova for enviada e conferida. Se nada mudou, nada é enviado.
+        </small>
+        <small v-if="!retentionValid" class="error">Mantenha ao menos a última versão.</small>
+      </fieldset>
+    </template>
+
+    <fieldset v-else class="field">
       <legend>Modo</legend>
       <label class="choice">
         <input v-model="form.mode" type="radio" value="upload" />

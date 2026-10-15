@@ -7,13 +7,15 @@ com uma CLI (`syncly`) que também servirá aos agendamentos.
 ## Status
 
 Já dá para **sincronizar pastas** com o Google Drive ou com uma pasta local (HD externo) —
-com prévia, execução, progresso e cancelamento —, **enviar e baixar arquivos avulsos** e
-**compactar/descompactar** em ZIP e TAR. Tudo verificado por checksum.
+com prévia, execução, progresso e cancelamento —, fazer **backup compactado com versões**
+(local ou no Drive), **enviar e baixar arquivos avulsos** e **compactar/descompactar** em ZIP
+e TAR. Tudo verificado por checksum.
 
 | Funcionalidade | Situação |
 |---|---|
 | Contas: Google Drive (login no navegador, credencial no keyring) e pastas locais | ✅ |
 | Tarefas: várias pastas/arquivos, destino, modo envio/espelho, exclusões | ✅ |
+| **Envio compactado** (backup): uma versão com data por execução, retenção, pula se nada mudou | ✅ |
 | Prévia da sincronização (enviar, atualizar, conflitos, lixeira) | ✅ |
 | **Executar a sincronização**, com progresso, cancelamento e histórico | ✅ |
 | Proteções: arquivos sensíveis, disco desmontado, exclusão em massa, 1ª execução, espaço na conta | ✅ |
@@ -21,7 +23,8 @@ com prévia, execução, progresso e cancelamento —, **enviar e baixar arquivo
 | **Compactar e descompactar** (zip, tar, tar.gz, tar.zst), protegido contra arquivos maliciosos | ✅ |
 | Logs em arquivo com rotação | ✅ |
 | Tela de status / última modificação de cada arquivo | fase 1c |
-| Backup local/remoto agendado, criptografia, restauração | fase 2b |
+| Restaurar uma versão (baixar e descompactar) | fase 2c (hoje: tela Arquivos + Compactar) |
+| Criptografia das versões | fase 2d |
 | Agendamento, notificações, ícone na bandeja | fase 3 |
 | Sincronização bidirecional | fase 4 |
 | Outros provedores; macOS e Windows | fase 5 |
@@ -38,7 +41,7 @@ Detalhes em [docs/SEGURANCA.md](docs/SEGURANCA.md).
 
 ## Começando
 
-Requisitos (Fedora): Rust ≥ 1.89, Node 20.19+ ou 22.12+, pnpm (`corepack enable`) e
+Requisitos (Fedora): Rust ≥ 1.90, Node 20.19+ ou 22.12+, pnpm (`corepack enable`) e
 `webkit2gtk4.1-devel openssl-devel libappindicator-gtk3-devel librsvg2-devel`.
 
 ```bash
@@ -55,21 +58,29 @@ Para usar o Google Drive, configure antes o seu projeto no Google Cloud:
 |---|---|
 | **Visão geral** | Primeiros passos, tarefas e última execução, onde ficam config, dados e logs. |
 | **Contas** | **Conectar Google Drive** (abre o navegador; clique em *Continuar* no aviso "O Google não verificou este app" — é o seu próprio app) e adicionar **pastas locais** (HD externo, NAS). |
-| **Tarefas** | Criar uma tarefa (fontes + destino + modo), **Pré-visualizar** e **Executar**. Na primeira execução o app pede confirmação. |
+| **Tarefas** | Criar uma tarefa (fontes + destino + como enviar), **Pré-visualizar** e **Executar**. Na primeira execução o app pede confirmação. |
 | **Arquivos** | Navegar na pasta `Syncly/` de uma conta, **enviar** e **baixar** arquivos avulsos. |
 | **Compactar** | Compactar pastas/arquivos em ZIP, TAR.GZ, TAR.ZST ou TAR, e descompactar numa pasta nova. |
 
-Modos de uma tarefa:
+Como uma tarefa envia:
 
-- **Envio** (recomendado) — manda o que é novo ou mudou; nunca apaga nada no destino.
-- **Espelho** — o que você apagar no computador vai para a **lixeira** do destino
-  (recuperável por 30 dias no Drive), com proteção contra exclusões em massa.
+- **Arquivo por arquivo**, no modo:
+  - **Envio** (recomendado) — manda o que é novo ou mudou; nunca apaga nada no destino.
+  - **Espelho** — o que você apagar no computador vai para a **lixeira** do destino
+    (recuperável por 30 dias no Drive), com proteção contra exclusões em massa.
+- **Compactado** (backup) — a cada execução, tudo vira um único arquivo
+  `Tarefa_AAAA-MM-DD_HH-MM-SS.zip` (ou `.tar.gz`, `.tar.zst`, `.tar`). Guarda as últimas 3
+  versões + 1 por dia (7 dias), por semana (4) e por mês (6) — configurável; as mais antigas
+  vão para a lixeira. Se nada mudou, nada é enviado. Ideal para pastas com muitos arquivos
+  pequenos (ex.: saves de jogos). Com uma conta do tipo pasta local, é um backup
+  local (HD externo).
 
 Dicas:
 
 - Feche programas que escrevem nos arquivos da tarefa (ex.: um jogo com o mundo aberto).
   Não corrompe nada, mas o que mudar durante o envio é reenviado na próxima execução.
 - Da segunda execução em diante, só vai o que mudou.
+- Compactar não é criptografar: as versões ficam legíveis no Drive, como os demais arquivos.
 - Enquanto o app estiver em "Testando" no Google Cloud, o login vale por 7 dias; depois,
   **Contas → Reconectar**.
 - Nada some sem querer: o app nunca sobrescreve nem apaga definitivamente — envio que já
@@ -83,6 +94,7 @@ cargo run -p syncly-cli -- accounts
 cargo run -p syncly-cli -- jobs
 cargo run -p syncly-cli -- preview Documentos         # nome ou ID da tarefa
 cargo run -p syncly-cli -- run Documentos --confirm   # executa (1ª vez exige --confirm)
+cargo run -p syncly-cli -- jobs                       # mostra o tipo: envio, espelho ou compactado
 
 cargo run -p syncly-cli -- google connect             # abre o navegador para autorizar
 cargo run -p syncly-cli -- remote put ~/foto.jpg Testes          # envia para Syncly/Testes/

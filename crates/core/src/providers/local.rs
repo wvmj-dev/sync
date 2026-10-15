@@ -179,11 +179,27 @@ impl StorageProvider for LocalProvider {
         .await
     }
 
+    async fn child_names(&self, folder_id: &str) -> ProviderResult<Vec<String>> {
+        self.check_root()?;
+        let dir = self.resolve(folder_id)?;
+        blocking(move || {
+            let mut out = Vec::new();
+            for item in fs::read_dir(&dir)? {
+                if let Some(name) = item?.file_name().to_str() {
+                    out.push(name.to_owned());
+                }
+            }
+            Ok(out)
+        })
+        .await
+    }
+
     async fn get(&self, id: &str) -> ProviderResult<Option<RemoteEntry>> {
         let path = self.resolve(id)?;
         let id = id.trim_matches('/').to_string();
+        // Sem hash: ler arquivos grandes só para consultar um item sairia caro.
         blocking(move || match fs::symlink_metadata(&path) {
-            Ok(_) => Self::entry(id, &path, true).map(Some),
+            Ok(_) => Self::entry(id, &path, false).map(Some),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(e.into()),
         })

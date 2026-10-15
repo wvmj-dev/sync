@@ -27,6 +27,9 @@ const steps = computed(() => [
 ]);
 
 const activeJobs = computed(() => store.jobs.filter((j) => j.enabled).length);
+const archiveJobs = computed(
+  () => store.jobs.filter((j) => j.sync?.delivery.kind === "archive").length,
+);
 </script>
 
 <template>
@@ -51,8 +54,8 @@ const activeJobs = computed(() => store.jobs.filter((j) => j.enabled).length);
       <span class="muted">contas</span>
     </div>
     <div class="card stat">
-      <span class="stat-value">{{ store.jobs.filter((j) => j.backupEnabled).length }}</span>
-      <span class="muted">com backup</span>
+      <span class="stat-value">{{ archiveJobs }}</span>
+      <span class="muted">enviam compactado</span>
     </div>
   </section>
 

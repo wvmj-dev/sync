@@ -10,7 +10,7 @@
 | "E se o app apagar algo por engano?" | Não existe exclusão definitiva no código. Tudo vai para a lixeira do Drive (30 dias). Guardas bloqueiam exclusões em massa. O Drive ainda mantém o histórico de versões de cada arquivo. |
 | "E se encher meu armazenamento?" | O app checa a cota antes de enviar e mantém uma reserva mínima (1 GiB). Conta cheia faz o Gmail parar de receber e-mails — o app não deixa chegar lá. |
 | "E se roubarem meu token?" | Tokens ficam no keyring do sistema (cifrado pelo SO), nunca em arquivo nem na interface web do app. Você pode revogar o acesso a qualquer momento em [myaccount.google.com/connections](https://myaccount.google.com/connections). |
-| "O Google vai 'ler' meus arquivos?" | Arquivos sincronizados ficam legíveis no Drive — é o que permite abri-los lá. Para dados sensíveis, a criptografia local dos backups (`age`, o Google só guarda bytes cifrados) chega na fase 2b. Arquivos sensíveis (`.env`, chaves, `.ssh`) já ficam de fora por padrão. |
+| "O Google vai 'ler' meus arquivos?" | Arquivos enviados ficam legíveis no Drive — é o que permite abri-los lá. Isso vale também para as versões compactadas: compactar **não** é criptografar. A criptografia local das versões (`age`, o Google só guarda bytes cifrados) chega na fase 2d. Arquivos sensíveis (`.env`, chaves, `.ssh`) já ficam de fora por padrão. |
 | "Abrir um `.zip` baixado da internet no Syncly é seguro?" | Sim: ele é tratado como não confiável. Nada é gravado fora da pasta nova de destino, links e permissões perigosas são ignorados, e um arquivo feito para encher o disco ("bomba de compressão") é interrompido antes (SEG-26). |
 
 ## 2. O que protegemos e de quem
@@ -44,10 +44,10 @@ chaves de criptografia; integridade dos backups.
 ### Integridade e proteção dos dados
 
 - **SEG-10** — A interface `StorageProvider` não possui exclusão definitiva; só `trash` (RN-44).
-- **SEG-11** — O app só opera dentro da sua pasta raiz e só altera itens presentes no seu índice (RN-03, RN-31).
+- **SEG-11** — O app só opera dentro da sua pasta raiz e só altera itens presentes no seu índice (RN-03, RN-31) ou versões compactadas que ele mesmo registrou (RN-55).
 - **SEG-12** — Guardas contra exclusão em massa e contra fonte vazia/desmontada (RN-40 a RN-43).
-- **SEG-13** — Verificação de checksum em todo upload, download e backup (RN-37, RN-52, RN-58).
-- **SEG-14** — Escrita atômica: arquivo temporário + `fsync` + `rename`, em config, downloads, backups e compactações.
+- **SEG-13** — Verificação de checksum em todo upload, download e versão compactada (RN-37, RN-52, RN-58).
+- **SEG-14** — Escrita atômica: arquivo temporário + `fsync` + `rename`, em config, downloads e compactações. Temporários do app (`.syncly-tmp-*`) são os únicos arquivos apagados de vez.
 
 ### Entrada não confiável
 
@@ -83,10 +83,10 @@ chaves de criptografia; integridade dos backups.
 ### Criptografia
 
 - **SEG-60** — `age` (X25519 + ChaCha20-Poly1305), via crate `age`. Nenhuma criptografia "caseira".
-- **SEG-61** — Chave privada só no keyring + arquivo de recuperação exportado pelo usuário (RN-72). Backups automáticos usam apenas a chave pública (RN-73).
+- **SEG-61** — Chave privada só no keyring + arquivo de recuperação exportado pelo usuário (RN-72). Versões automáticas usam apenas a chave pública (RN-73).
 
 ## 4. Fora do escopo (limites conhecidos)
 
 - Um malware rodando **como seu usuário**, com a sessão desbloqueada, pode pedir os segredos ao keyring. Nenhum app desktop resolve isso; mantenha o sistema atualizado.
-- Arquivos sincronizados (não os backups) ficam legíveis pelo Google — é o que permite visualizá-los no Drive. Use backup criptografado para dados sensíveis.
+- Arquivos enviados — sincronizados ou em versões compactadas — ficam legíveis pelo Google; é o que permite visualizá-los no Drive. Para dados sensíveis, aguarde as versões criptografadas (fase 2d) ou mantenha-os fora da tarefa (por padrão, `.env`, chaves e `.ssh` já ficam).
 - Arquivos colocados na pasta `Syncly/` pelo site do Drive não são visíveis ao app enquanto o escopo for `drive.file` (SEG-03).

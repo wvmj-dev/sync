@@ -1,6 +1,7 @@
 //! Tipos de domínio e suas validações. Sem I/O.
 
 pub mod account;
+pub mod archive_format;
 pub mod entry;
 pub mod job;
 pub mod plan;
@@ -9,10 +10,10 @@ pub mod run;
 pub mod schedule;
 
 pub use account::{Account, AccountKind};
+pub use archive_format::ArchiveFormat;
 pub use entry::{EntryKind, IndexEntry, LocalEntry};
 pub use job::{
-    BackupSettings, Destination, GuardLimits, Job, Retention, SyncMode, SyncSettings,
-    ValidationContext,
+    Delivery, Destination, GuardLimits, Job, Retention, SyncMode, SyncSettings, ValidationContext,
 };
 pub use plan::{Action, Plan, PlanStats, SkipReason};
 pub use rel_path::RelPath;
