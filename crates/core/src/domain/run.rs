@@ -25,6 +25,7 @@ str_enum!(RunKind {
     Backup => "backup",
     Restore => "restore",
     Compress => "compress",
+    Receive => "receive",
 });
 
 str_enum!(RunTrigger {

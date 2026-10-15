@@ -42,6 +42,8 @@ fn main() {
             commands::list_remote,
             commands::upload_file,
             commands::download_file,
+            commands::download_and_extract,
+            commands::upload_compressed,
             commands::run_job,
             commands::cancel_run,
             commands::list_versions,

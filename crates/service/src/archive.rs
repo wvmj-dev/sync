@@ -10,18 +10,18 @@ use std::time::Instant;
 use serde::{Deserialize, Serialize};
 use syncly_core::CoreError;
 use syncly_core::archive::{
-    self, ArchiveFormat, ArchiveProgress, CreateRequest, DISK_RESERVE_BYTES, ExtractRequest,
-    SkippedEntry,
+    self, ArchiveFormat, ArchiveProgress, CreateRequest, DISK_RESERVE_BYTES, ExtractReport,
+    ExtractRequest, SkippedEntry,
 };
 use syncly_core::domain::Job;
 use syncly_core::domain::rel_path::validate_name;
 use syncly_core::filters::Filter;
 use syncly_core::fsutil::unique_path;
-use syncly_core::sync::scanner::{self, ScanRequest};
+use syncly_core::sync::scanner::{self, ScanRequest, ScanResult};
 
 use crate::dto::human_bytes;
 use crate::error::{ServiceError, ServiceResult};
-use crate::service::Service;
+use crate::service::{Service, elapsed_ms};
 
 const MAX_INPUTS: usize = 32;
 pub(crate) const MAX_REPORTED: usize = 50;
@@ -67,10 +67,12 @@ pub struct ExtractResult {
 }
 
 /// Uma operação de arquivo por vez; libera o lugar ao terminar, mesmo com erro.
-struct Slot<'a>(&'a Mutex<Option<Arc<AtomicBool>>>);
+pub(crate) struct Slot<'a>(&'a Mutex<Option<Arc<AtomicBool>>>);
 
 impl<'a> Slot<'a> {
-    fn take(holder: &'a Mutex<Option<Arc<AtomicBool>>>) -> ServiceResult<(Self, Arc<AtomicBool>)> {
+    pub(crate) fn take(
+        holder: &'a Mutex<Option<Arc<AtomicBool>>>,
+    ) -> ServiceResult<(Self, Arc<AtomicBool>)> {
         let mut current = holder.lock().unwrap_or_else(PoisonError::into_inner);
         if current.is_some() {
             return Err(ServiceError::Busy(
@@ -89,7 +91,7 @@ impl Drop for Slot<'_> {
     }
 }
 
-fn absolute_dir(path: &Path, what: &str) -> ServiceResult<()> {
+pub(crate) fn absolute_dir(path: &Path, what: &str) -> ServiceResult<()> {
     if path.is_absolute() && path.is_dir() {
         Ok(())
     } else {
@@ -100,7 +102,7 @@ fn absolute_dir(path: &Path, what: &str) -> ServiceResult<()> {
     }
 }
 
-async fn blocking<T: Send + 'static>(
+pub(crate) async fn blocking<T: Send + 'static>(
     f: impl FnOnce() -> Result<T, CoreError> + Send + 'static,
 ) -> ServiceResult<T> {
     tokio::task::spawn_blocking(f)
@@ -131,30 +133,7 @@ impl Service {
         progress: impl Fn(&ArchiveProgress) + Send + Sync + 'static,
     ) -> ServiceResult<CompressResult> {
         let started = Instant::now();
-        if req.inputs.is_empty() || req.inputs.len() > MAX_INPUTS {
-            return Err(ServiceError::Invalid(format!(
-                "escolha de 1 a {MAX_INPUTS} pastas ou arquivos"
-            )));
-        }
-        let mut names = HashSet::new();
-        for input in &req.inputs {
-            if !input.is_absolute() || !input.exists() {
-                return Err(ServiceError::Invalid(format!(
-                    "'{}' não existe",
-                    input.display()
-                )));
-            }
-            let name = Job::source_name(input)
-                .filter(|n| validate_name(n).is_ok())
-                .ok_or_else(|| {
-                    ServiceError::Invalid(format!("'{}' não tem um nome válido", input.display()))
-                })?;
-            if !names.insert(name.to_lowercase()) {
-                return Err(ServiceError::Invalid(format!(
-                    "duas entradas com o mesmo nome '{name}'"
-                )));
-            }
-        }
+        let name = check_inputs(&req.inputs, req.name.as_deref())?;
         absolute_dir(&req.output_dir, "a pasta de saída")?;
         // RN-62: o arquivo não pode ser gerado dentro do que está sendo compactado.
         if req.inputs.iter().any(|i| req.output_dir.starts_with(i)) {
@@ -162,43 +141,12 @@ impl Service {
                 "a pasta de saída não pode ficar dentro do que está sendo compactado".into(),
             ));
         }
-        let name = match &req.name {
-            Some(n) if !n.trim().is_empty() => n.trim().to_string(),
-            _ if req.inputs.len() == 1 => Job::source_name(&req.inputs[0])
-                .unwrap_or("arquivos")
-                .to_string(),
-            _ => "arquivos".to_string(),
-        };
-        validate_name(&name).map_err(ServiceError::Invalid)?;
 
         let (_slot, cancel) = Slot::take(&self.archive_op)?;
-        // RN-64: mesmos filtros da sincronização (lixo, sensíveis, `.syncignore`, links).
-        let scan_request = ScanRequest {
-            sources: req.inputs.clone(),
-            filter: Filter::new(&[], req.include_sensitive).map_err(ServiceError::Invalid)?,
-            skip_dirs: self.paths.app_dirs(),
-            hash_kind: None,
-        };
-        let scan = blocking(move || Ok(scanner::scan(&scan_request, &Default::default()))).await?;
-        if scan.entries.is_empty() {
-            return Err(ServiceError::Invalid(
-                "nada para compactar (tudo foi excluído pelos filtros ou não pôde ser lido)".into(),
-            ));
-        }
-
-        // RN-67: o resultado nunca é maior que a soma das entradas (+ pequena sobra).
-        let estimated: u64 = scan.entries.values().map(|e| e.size).sum();
-        if let Ok(available) = fs4::available_space(&req.output_dir)
-            && available < estimated.saturating_add(DISK_RESERVE_BYTES)
-        {
-            return Err(CoreError::DiskFull(format!(
-                "a pasta de saída tem {} livres; a compactação pode precisar de até {} (reserva de {})",
-                human_bytes(available),
-                human_bytes(estimated),
-                human_bytes(DISK_RESERVE_BYTES)
-            ))
-            .into());
-        }
+        let scan = self
+            .scan_inputs(req.inputs.clone(), req.include_sensitive)
+            .await?;
+        ensure_space(&req.output_dir, total_size(&scan), "a pasta de saída")?;
 
         let output = unique_path(&req.output_dir, &name, req.format.extension());
         let warnings: Vec<String> = scan.warnings.iter().map(|w| w.describe()).collect();
@@ -227,6 +175,28 @@ impl Service {
         })
     }
 
+    /// RN-64: mesmos filtros da sincronização (lixo, sensíveis, `.syncignore`, links).
+    /// Se nada sobrar, é erro — nunca se cria um compactado vazio.
+    pub(crate) async fn scan_inputs(
+        &self,
+        inputs: Vec<PathBuf>,
+        include_sensitive: bool,
+    ) -> ServiceResult<ScanResult> {
+        let request = ScanRequest {
+            sources: inputs,
+            filter: Filter::new(&[], include_sensitive).map_err(ServiceError::Invalid)?,
+            skip_dirs: self.paths.app_dirs(),
+            hash_kind: None,
+        };
+        let scan = blocking(move || Ok(scanner::scan(&request, &Default::default()))).await?;
+        if scan.entries.is_empty() {
+            return Err(ServiceError::Invalid(
+                "nada para compactar (tudo foi excluído pelos filtros ou não pôde ser lido)".into(),
+            ));
+        }
+        Ok(scan)
+    }
+
     /// Descompacta numa pasta nova dentro de `dest_dir` (RN-65 a RN-67).
     pub async fn extract(
         &self,
@@ -246,37 +216,18 @@ impl Service {
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or_default();
-        let Some((_, stem)) = ArchiveFormat::detect(file_name) else {
-            return Err(ServiceError::Invalid(
-                "formato não suportado — use .zip, .tar, .tar.gz ou .tar.zst".into(),
-            ));
-        };
-        let stem = if validate_name(stem).is_ok() {
-            stem
-        } else {
-            "extraido"
-        };
-        // RN-65: sempre numa pasta nova — nunca por cima de arquivos existentes.
-        let dest = unique_path(&dest_dir, stem, "");
+        let stem = archive_stem(file_name)?;
 
         let (_slot, cancel) = Slot::take(&self.archive_op)?;
-        let report = blocking(move || {
-            archive::extract(&ExtractRequest {
-                archive: &archive_path,
-                dest: &dest,
-                reserve_bytes: DISK_RESERVE_BYTES,
-                cancel: &cancel,
-                progress: &progress,
-            })
-        })
-        .await?;
-        tracing::info!(
-            files = report.files,
-            skipped = report.skipped.len(),
-            "descompactação concluída"
-        );
+        let report = extract_new_folder(archive_path, &dest_dir, &stem, cancel, progress).await?;
+        Ok(ExtractResult::from_report(report, started))
+    }
+}
+
+impl ExtractResult {
+    pub(crate) fn from_report(report: ExtractReport, started: Instant) -> Self {
         let skipped_count = report.skipped.len();
-        Ok(ExtractResult {
+        Self {
             dest: report.dest.display().to_string(),
             files: report.files,
             folders: report.folders,
@@ -284,12 +235,110 @@ impl Service {
             skipped: report.skipped.into_iter().take(MAX_REPORTED).collect(),
             skipped_count,
             duration_ms: elapsed_ms(started),
-        })
+        }
     }
 }
 
-fn elapsed_ms(started: Instant) -> u64 {
-    u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
+/// RN-65: a pasta nova leva o nome do arquivo sem a extensão.
+pub(crate) fn archive_stem(file_name: &str) -> ServiceResult<String> {
+    let Some((_, stem)) = ArchiveFormat::detect(file_name) else {
+        return Err(ServiceError::Invalid(
+            "formato não suportado — use .zip, .tar, .tar.gz ou .tar.zst".into(),
+        ));
+    };
+    Ok(if validate_name(stem).is_ok() {
+        stem.to_string()
+    } else {
+        "extraido".to_string()
+    })
+}
+
+/// RN-65 a RN-67: descompacta numa pasta nova dentro de `dest_dir` — nunca por cima de
+/// arquivos existentes —, tratando o conteúdo como não confiável.
+pub(crate) async fn extract_new_folder(
+    archive_path: PathBuf,
+    dest_dir: &Path,
+    stem: &str,
+    cancel: Arc<AtomicBool>,
+    progress: impl Fn(&ArchiveProgress) + Send + Sync + 'static,
+) -> ServiceResult<ExtractReport> {
+    let dest = unique_path(dest_dir, stem, "");
+    let report = blocking(move || {
+        archive::extract(&ExtractRequest {
+            archive: &archive_path,
+            dest: &dest,
+            reserve_bytes: DISK_RESERVE_BYTES,
+            cancel: &cancel,
+            progress: &progress,
+        })
+    })
+    .await?;
+    tracing::info!(
+        files = report.files,
+        skipped = report.skipped.len(),
+        "descompactação concluída"
+    );
+    Ok(report)
+}
+
+/// RN-60: de 1 a 32 entradas existentes, com nomes únicos (viram o primeiro nível do
+/// arquivo). Retorna o nome do arquivo sem extensão: o pedido, o da única entrada, ou
+/// "arquivos".
+pub(crate) fn check_inputs(inputs: &[PathBuf], name: Option<&str>) -> ServiceResult<String> {
+    if inputs.is_empty() || inputs.len() > MAX_INPUTS {
+        return Err(ServiceError::Invalid(format!(
+            "escolha de 1 a {MAX_INPUTS} pastas ou arquivos"
+        )));
+    }
+    let mut names = HashSet::new();
+    for input in inputs {
+        if !input.is_absolute() || !input.exists() {
+            return Err(ServiceError::Invalid(format!(
+                "'{}' não existe",
+                input.display()
+            )));
+        }
+        let name = Job::source_name(input)
+            .filter(|n| validate_name(n).is_ok())
+            .ok_or_else(|| {
+                ServiceError::Invalid(format!("'{}' não tem um nome válido", input.display()))
+            })?;
+        if !names.insert(name.to_lowercase()) {
+            return Err(ServiceError::Invalid(format!(
+                "duas entradas com o mesmo nome '{name}'"
+            )));
+        }
+    }
+    let name = match name {
+        Some(n) if !n.trim().is_empty() => n.trim().to_string(),
+        _ if inputs.len() == 1 => Job::source_name(&inputs[0])
+            .unwrap_or("arquivos")
+            .to_string(),
+        _ => "arquivos".to_string(),
+    };
+    validate_name(&name).map_err(ServiceError::Invalid)?;
+    Ok(name)
+}
+
+/// Soma dos tamanhos: o compactado nunca passa disso (+ cabeçalhos).
+pub(crate) fn total_size(scan: &ScanResult) -> u64 {
+    scan.entries.values().map(|e| e.size).sum()
+}
+
+/// RN-67: `needed` bytes cabem em `dir` sem passar da reserva de 1 GiB.
+pub(crate) fn ensure_space(dir: &Path, needed: u64, what: &str) -> ServiceResult<()> {
+    match fs4::available_space(dir) {
+        Ok(available) if available < needed.saturating_add(DISK_RESERVE_BYTES) => {
+            Err(CoreError::DiskFull(format!(
+                "{what} tem {} livres; a operação pode precisar de até {} (reserva de {})",
+                human_bytes(available),
+                human_bytes(needed),
+                human_bytes(DISK_RESERVE_BYTES)
+            ))
+            .into())
+        }
+        _ => Ok(()),
+    }
 }
 
 #[cfg(test)]

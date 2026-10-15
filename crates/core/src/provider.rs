@@ -131,6 +131,13 @@ pub trait StorageProvider: Send + Sync {
     /// quando calculá-lo exigiria ler o arquivo (provedor local).
     async fn get(&self, id: &str) -> ProviderResult<Option<RemoteEntry>>;
 
+    /// Itens de uma pasta sem exigir `hash` — mais barato quando o provedor teria de ler o
+    /// conteúdo para calculá-lo (provedor local). Para comparar conteúdo, use
+    /// [`Self::list_children`].
+    async fn list_children_meta(&self, folder_id: &str) -> ProviderResult<Vec<RemoteEntry>> {
+        self.list_children(folder_id).await
+    }
+
     /// Só os nomes dos itens de uma pasta — mais barato que [`Self::list_children`] quando
     /// o provedor teria de ler o conteúdo para calcular hashes.
     async fn child_names(&self, folder_id: &str) -> ProviderResult<Vec<String>> {

@@ -1,9 +1,14 @@
-//! Transferências avulsas: listar, enviar e baixar um arquivo (RN-104 a RN-106).
-//! Funcionam com qualquer provedor — Drive ou pasta local.
+//! Transferências avulsas: listar, enviar e baixar um arquivo (RN-104 a RN-106), baixar e
+//! descompactar (RN-108) e enviar compactado (RN-109). Funcionam com qualquer provedor —
+//! Drive ou pasta local.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
+use std::time::Instant;
 
 use syncly_core::CoreError;
+use syncly_core::archive::{self, ArchiveFormat, ArchiveProgress, CreateRequest};
 use syncly_core::domain::rel_path::{join_str, validate_name};
 use syncly_core::domain::{EntryKind, RelPath};
 use syncly_core::filters::Filter;
@@ -12,9 +17,17 @@ use syncly_core::provider::{RemoteEntry, StorageProvider};
 use syncly_core::sync::remote_tree::resolve_path;
 use uuid::Uuid;
 
-use crate::dto::RemoteItem;
+use crate::archive::{
+    ExtractResult, Slot, absolute_dir, archive_stem, blocking, check_inputs, ensure_space,
+    extract_new_folder, total_size,
+};
+use crate::delivery::{TMP_PREFIX, TempFile};
+use crate::dto::{RemoteItem, UploadCompressedRequest};
 use crate::error::{ServiceError, ServiceResult};
-use crate::service::Service;
+use crate::service::{Service, quota_shortfall};
+
+/// Temporários das operações avulsas (a vaga única de compactação os protege).
+const STAGING: &str = "avulsos";
 
 impl Service {
     /// Conta por ID, nome ou e-mail. Sem chave: a única conta existente.
@@ -116,15 +129,7 @@ impl Service {
         let dir = RelPath::parse(remote_dir).map_err(ServiceError::Invalid)?;
         let provider = self.provider_by_id(account_id).await?;
         let folder = resolve_folder(provider.as_ref(), &dir, true).await?;
-        let siblings = provider
-            .list_children(&folder.id)
-            .await
-            .map_err(CoreError::from)?;
-        if siblings.iter().any(|s| s.name == name) {
-            return Err(ServiceError::Invalid(format!(
-                "já existe '{name}' em Syncly/{dir} — nada foi sobrescrito"
-            )));
-        }
+        ensure_free_name(provider.as_ref(), &folder.id, &name, &dir).await?;
         let entry = provider
             .upload_new(&folder.id, &name, local)
             .await
@@ -171,6 +176,152 @@ impl Service {
         tracing::info!(account = %account_id, "arquivo baixado");
         Ok(dest)
     }
+}
+
+impl Service {
+    /// Baixa um `.zip`/`.tar.*` da conta e o descompacta numa pasta nova dentro de
+    /// `local_dir` (RN-108), com as proteções de RN-65 a RN-67. Progresso e cancelamento
+    /// como na tela Compactar (uma operação dessas por vez).
+    pub async fn download_and_extract(
+        &self,
+        account_id: Uuid,
+        remote_path: &str,
+        local_dir: PathBuf,
+        progress: impl Fn(&ArchiveProgress) + Send + Sync + 'static,
+    ) -> ServiceResult<ExtractResult> {
+        let started = Instant::now();
+        absolute_dir(&local_dir, "a pasta de destino")?;
+        let path = RelPath::parse(remote_path).map_err(ServiceError::Invalid)?;
+        let name = path
+            .components()
+            .last()
+            .ok_or_else(|| ServiceError::Invalid("informe o caminho de um arquivo".into()))?
+            .to_string();
+        // Formato desconhecido falha antes de qualquer acesso à rede.
+        let stem = archive_stem(&name)?;
+        let format = ArchiveFormat::detect(&name).map_or(ArchiveFormat::Zip, |(f, _)| f);
+        let parent = RelPath::parse(syncly_core::domain::rel_path::parent_str(path.as_str()))
+            .map_err(ServiceError::Invalid)?;
+
+        let provider = self.provider_by_id(account_id).await?;
+        let folder = resolve_folder(provider.as_ref(), &parent, false).await?;
+        let entry = single_child(provider.as_ref(), &folder.id, &name).await?;
+        if entry.kind != EntryKind::File {
+            return Err(ServiceError::Invalid(format!("'{name}' é uma pasta")));
+        }
+
+        let (_slot, cancel) = Slot::take(&self.archive_op)?;
+        let staging = self.staging_dir(STAGING)?;
+        ensure_space(&staging, entry.size.unwrap_or(0), "o disco do computador")?;
+        let temp = TempFile(staging.join(format!(
+            "{TMP_PREFIX}{}.{}",
+            Uuid::new_v4(),
+            format.extension()
+        )));
+        progress(&ArchiveProgress {
+            bytes_total: entry.size.unwrap_or(0),
+            current: Some(format!("baixando {name}")),
+            ..ArchiveProgress::default()
+        });
+        // RN-106: o provedor confere o checksum do download.
+        provider
+            .download(&entry.id, &temp.0)
+            .await
+            .map_err(CoreError::from)?;
+        if cancel.load(Ordering::Relaxed) {
+            return Err(CoreError::Cancelled.into());
+        }
+        let report =
+            extract_new_folder(temp.0.clone(), &local_dir, &stem, cancel, progress).await?;
+        tracing::info!(account = %account_id, "arquivo baixado e descompactado");
+        Ok(ExtractResult::from_report(report, started))
+    }
+
+    /// Compacta pastas/arquivos e envia como um único arquivo para `remote_dir` (RN-109).
+    /// Nunca sobrescreve nem duplica (RN-104); arquivos sensíveis ficam de fora (RN-105).
+    pub async fn upload_compressed(
+        &self,
+        req: UploadCompressedRequest,
+        progress: impl Fn(&ArchiveProgress) + Send + Sync + 'static,
+    ) -> ServiceResult<RemoteItem> {
+        let stem = check_inputs(&req.inputs, req.name.as_deref())?;
+        let name = format!("{stem}.{}", req.format.extension());
+        validate_name(&name).map_err(ServiceError::Invalid)?;
+        let dir = RelPath::parse(&req.remote_dir).map_err(ServiceError::Invalid)?;
+        let settings = self.load()?.settings;
+
+        let provider = self.provider_by_id(req.account_id).await?;
+        let folder = resolve_folder(provider.as_ref(), &dir, true).await?;
+        // Antes de compactar, para não gastar tempo à toa.
+        ensure_free_name(provider.as_ref(), &folder.id, &name, &dir).await?;
+
+        let (_slot, cancel) = Slot::take(&self.archive_op)?;
+        // RN-105: sensíveis nunca vão no envio avulso.
+        let scan = self.scan_inputs(req.inputs.clone(), false).await?;
+        let staging = self.staging_dir(STAGING)?;
+        ensure_space(&staging, total_size(&scan), "o disco do computador")?;
+        let temp = TempFile(staging.join(format!(
+            "{TMP_PREFIX}{}.{}",
+            Uuid::new_v4(),
+            req.format.extension()
+        )));
+
+        let progress = Arc::new(progress);
+        let (output, format, flag, report) =
+            (temp.0.clone(), req.format, cancel.clone(), progress.clone());
+        let created = blocking(move || {
+            archive::create(&CreateRequest {
+                scan: &scan,
+                output: &output,
+                format,
+                level: None,
+                cancel: &flag,
+                progress: &*report,
+            })
+        })
+        .await?;
+        // RN-46: com o tamanho real, já compactado.
+        if let Some(msg) = quota_shortfall(provider.as_ref(), &settings, created.bytes_out).await? {
+            return Err(ServiceError::Invalid(msg));
+        }
+        if cancel.load(Ordering::Relaxed) {
+            return Err(CoreError::Cancelled.into());
+        }
+        progress(&ArchiveProgress {
+            files_done: created.files,
+            files_total: created.files,
+            bytes_done: 0,
+            bytes_total: created.bytes_out,
+            current: Some(format!("enviando {name}")),
+        });
+        // Alguém pode ter criado o mesmo nome enquanto compactava.
+        ensure_free_name(provider.as_ref(), &folder.id, &name, &dir).await?;
+        let entry = provider
+            .upload_new(&folder.id, &name, &temp.0)
+            .await
+            .map_err(CoreError::from)?;
+        tracing::info!(account = %req.account_id, files = created.files, "pasta compactada enviada");
+        Ok(to_item(dir.as_str(), entry))
+    }
+}
+
+/// RN-104: nunca sobrescreve nem cria um segundo item com o mesmo nome.
+async fn ensure_free_name(
+    provider: &dyn StorageProvider,
+    folder_id: &str,
+    name: &str,
+    dir: &RelPath,
+) -> ServiceResult<()> {
+    let taken = provider
+        .child_names(folder_id)
+        .await
+        .map_err(CoreError::from)?;
+    if taken.iter().any(|t| t == name) {
+        return Err(ServiceError::Invalid(format!(
+            "já existe '{name}' em Syncly/{dir} — nada foi sobrescrito"
+        )));
+    }
+    Ok(())
 }
 
 /// Pasta dentro da raiz do app; com `create`, cria as que faltarem.
@@ -281,6 +432,85 @@ mod tests {
         assert_eq!(first, dl.join("a.txt"));
         assert_eq!(second, dl.join("a (2).txt"));
         assert_eq!(std::fs::read_to_string(second).unwrap(), "conteúdo");
+    }
+
+    fn names(dir: &Path) -> Vec<String> {
+        let mut out: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        out.sort();
+        out
+    }
+
+    #[tokio::test]
+    async fn rn109_rn108_envia_pasta_compactada_e_baixa_descompactando() {
+        let tmp = tempfile::tempdir().unwrap();
+        let svc = service(&tmp.path().join("app"), "http://127.0.0.1:9");
+        let hd = tmp.path().join("hd");
+        std::fs::create_dir_all(&hd).unwrap();
+        let account = svc.add_local_account("HD".into(), hd.clone()).unwrap();
+        let docs = tmp.path().join("Docs");
+        std::fs::create_dir_all(docs.join("sub")).unwrap();
+        std::fs::write(docs.join("a.txt"), "a").unwrap();
+        std::fs::write(docs.join("sub/b.txt"), "b").unwrap();
+        std::fs::write(docs.join(".env"), "SECRET=1").unwrap();
+
+        let request = UploadCompressedRequest {
+            account_id: account.id,
+            inputs: vec![docs.clone()],
+            remote_dir: "Testes".into(),
+            format: ArchiveFormat::Zip,
+            name: None,
+        };
+        let item = svc
+            .upload_compressed(request.clone(), |_| {})
+            .await
+            .unwrap();
+        assert_eq!(item.path, "Testes/Docs.zip");
+        assert!(hd.join("Testes/Docs.zip").is_file());
+        // RN-104: o mesmo nome de novo é recusado, nada é sobrescrito.
+        let err = svc.upload_compressed(request, |_| {}).await.unwrap_err();
+        assert!(err.to_string().contains("já existe"), "{err}");
+
+        let out = tmp.path().join("baixados");
+        std::fs::create_dir_all(&out).unwrap();
+        let first = svc
+            .download_and_extract(account.id, "Testes/Docs.zip", out.clone(), |_| {})
+            .await
+            .unwrap();
+        let dest = PathBuf::from(&first.dest);
+        assert_eq!(dest, out.join("Docs"));
+        assert_eq!(
+            std::fs::read_to_string(dest.join("sub/b.txt")).unwrap(),
+            "b"
+        );
+        // RN-105: o arquivo sensível não saiu do computador.
+        assert!(!dest.join(".env").exists());
+        // RN-65: de novo, numa pasta nova.
+        let second = svc
+            .download_and_extract(account.id, "Testes/Docs.zip", out.clone(), |_| {})
+            .await
+            .unwrap();
+        assert_eq!(PathBuf::from(second.dest), out.join("Docs (2)"));
+
+        // Nenhum temporário sobra.
+        let staging = svc.paths.data_dir.join("tmp").join(STAGING);
+        assert!(names(&staging).is_empty());
+    }
+
+    #[tokio::test]
+    async fn rn108_formato_desconhecido_e_recusado_antes_de_baixar() {
+        let tmp = tempfile::tempdir().unwrap();
+        let svc = service(&tmp.path().join("app"), "http://127.0.0.1:9");
+        let hd = tmp.path().join("hd");
+        std::fs::create_dir_all(&hd).unwrap();
+        let account = svc.add_local_account("HD".into(), hd).unwrap();
+        let err = svc
+            .download_and_extract(account.id, "Testes/foto.jpg", tmp.path().into(), |_| {})
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("formato"), "{err}");
     }
 
     fn add_google_account(svc: &Service) -> Uuid {

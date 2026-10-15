@@ -1,4 +1,5 @@
-//! Tarefa ("rotina"): fontes + destino + forma de entrega (RN-10 a RN-19, RN-50 a RN-55).
+//! Tarefa ("rotina"): fontes + destino + forma de entrega (RN-10 a RN-19, RN-50 a RN-55,
+//! RN-107, RN-110).
 
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
@@ -50,19 +51,28 @@ impl Default for GuardLimits {
     }
 }
 
-/// Como a tarefa entrega as fontes no destino — a "forma" da rotina.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+/// O que a tarefa faz — a "forma" da rotina.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Delivery {
-    /// Arquivo por arquivo: sincronização (modos Envio/Espelho, RN-30 a RN-39).
+    /// Envia arquivo por arquivo: sincronização (modos Envio/Espelho, RN-30 a RN-39).
     #[default]
     Files,
-    /// Um arquivo compactado por execução, com versões (RN-50 a RN-55, RN-59).
+    /// Envia um arquivo compactado por execução, com versões (RN-50 a RN-55, RN-59).
     Archive {
         format: ArchiveFormat,
         #[serde(default)]
         retention: Retention,
     },
+    /// Recebe: baixa a versão mais recente do destino e a descompacta numa pasta nova
+    /// dentro de `target` (RN-107). Não tem fontes (RN-110).
+    Receive { target: PathBuf },
+}
+
+impl Delivery {
+    pub fn is_receive(&self) -> bool {
+        matches!(self, Self::Receive { .. })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -127,6 +137,27 @@ pub struct ValidationContext<'a> {
     pub app_dirs: &'a [PathBuf],
 }
 
+/// RN-12: fora das pastas de sistema e das pastas do próprio app.
+fn check_local_dir(path: &Path, ctx: &ValidationContext<'_>) -> Result<(), String> {
+    let shown = path.display();
+    if !path.is_absolute() {
+        return Err(format!("'{shown}' deve ser um caminho absoluto"));
+    }
+    if path
+        .components()
+        .any(|c| matches!(c, Component::ParentDir | Component::CurDir))
+    {
+        return Err(format!("'{shown}' não pode conter '.' ou '..'"));
+    }
+    if path == Path::new("/") || SYSTEM_DIRS.iter().any(|d| path.starts_with(d)) {
+        return Err(format!("'{shown}' é uma pasta de sistema"));
+    }
+    if ctx.app_dirs.iter().any(|d| path.starts_with(d)) {
+        return Err(format!("'{shown}' fica dentro das pastas do Syncly"));
+    }
+    Ok(())
+}
+
 impl Job {
     /// Nome de cada fonte no destino (RN-14). `None` para caminhos sem nome (ex.: `/`).
     pub fn source_name(source: &Path) -> Option<&str> {
@@ -147,33 +178,32 @@ impl Job {
             push("nome", e);
         }
 
-        // RN-11 a RN-14
-        if self.sources.is_empty() || self.sources.len() > MAX_SOURCES {
-            push("fontes", format!("informe de 1 a {MAX_SOURCES} fontes"));
+        let receive_target = match self.sync.as_ref().map(|s| &s.delivery) {
+            Some(Delivery::Receive { target }) => Some(target),
+            _ => None,
+        };
+        // RN-11 a RN-14; RN-110: quem recebe não tem fontes.
+        match receive_target {
+            Some(_) if !self.sources.is_empty() => {
+                push("fontes", "uma tarefa que recebe não tem fontes".into());
+            }
+            Some(_) => {}
+            None if self.sources.is_empty() || self.sources.len() > MAX_SOURCES => {
+                push("fontes", format!("informe de 1 a {MAX_SOURCES} fontes"));
+            }
+            None => {}
+        }
+        // RN-110: a pasta que recebe segue as mesmas restrições de uma fonte (RN-12).
+        if let Some(target) = receive_target
+            && let Err(e) = check_local_dir(target, ctx)
+        {
+            push("pasta no computador", e);
         }
         let mut names = HashSet::new();
         for (i, src) in self.sources.iter().enumerate() {
             let shown = src.display();
-            if !src.is_absolute() {
-                push("fontes", format!("'{shown}' deve ser um caminho absoluto"));
-                continue;
-            }
-            if src
-                .components()
-                .any(|c| matches!(c, Component::ParentDir | Component::CurDir))
-            {
-                push("fontes", format!("'{shown}' não pode conter '.' ou '..'"));
-                continue;
-            }
-            if src == Path::new("/") || SYSTEM_DIRS.iter().any(|d| src.starts_with(d)) {
-                push("fontes", format!("'{shown}' é uma pasta de sistema"));
-                continue;
-            }
-            if ctx.app_dirs.iter().any(|d| src.starts_with(d)) {
-                push(
-                    "fontes",
-                    format!("'{shown}' fica dentro das pastas do Syncly"),
-                );
+            if let Err(e) = check_local_dir(src, ctx) {
+                push("fontes", e);
                 continue;
             }
             match Self::source_name(src) {

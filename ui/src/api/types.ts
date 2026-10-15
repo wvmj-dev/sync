@@ -10,10 +10,11 @@ export interface Retention {
   monthly: number;
 }
 
-/** RN-50: arquivo por arquivo, ou tudo num arquivo compactado com versões. */
+/** O que a tarefa faz: envia arquivo por arquivo, envia compactado (RN-50) ou recebe (RN-107). */
 export type Delivery =
   | { kind: "files" }
-  | { kind: "archive"; format: ArchiveFormat; retention: Retention };
+  | { kind: "archive"; format: ArchiveFormat; retention: Retention }
+  | { kind: "receive"; target: string };
 
 export interface AppInfo {
   version: string;
@@ -44,7 +45,7 @@ export type RunStatus =
   | "postponed";
 
 export interface RunSummary {
-  kind: "sync" | "backup" | "restore" | "compress";
+  kind: "sync" | "backup" | "restore" | "compress" | "receive";
   trigger: "manual" | "scheduled";
   status: RunStatus;
   startedAt: string;
@@ -70,6 +71,17 @@ export interface JobSummary {
   includeSensitive: boolean;
   sync: SyncSummary | null;
   lastRun: RunSummary | null;
+}
+
+/** "Enviar compactado" avulso (RN-109). */
+export interface UploadCompressedRequest {
+  accountId: string;
+  inputs: string[];
+  /** Pasta dentro de Syncly/ ("" = raiz). */
+  remoteDir: string;
+  format: ArchiveFormat;
+  /** Sem extensão; `null` = nome da entrada. */
+  name: string | null;
 }
 
 /** Versão enviada por uma tarefa compactada (RN-50). */
@@ -162,6 +174,19 @@ export interface PlanPreview {
   firstRun: boolean;
   /** Presente quando a tarefa envia compactado; aí `stats` e `actions` ficam vazios. */
   archive: ArchivePreview | null;
+  /** Presente quando a tarefa recebe; aí `stats` e `actions` ficam vazios. */
+  receive: ReceivePreview | null;
+}
+
+/** RN-107. */
+export interface ReceivePreview {
+  /** Versão mais recente no destino; `null` se não houver nenhuma. */
+  name: string | null;
+  size: number | null;
+  modifiedAt: string | null;
+  alreadyReceived: boolean;
+  /** Pasta do computador onde a pasta nova será criada. */
+  target: string;
 }
 
 export interface ArchivePreview {
@@ -213,6 +238,18 @@ export interface RunReport {
   durationMs: number;
   /** Presente quando a tarefa envia compactado. */
   archive: ArchiveRun | null;
+  /** Presente quando a tarefa recebe. */
+  receive: ReceiveRun | null;
+}
+
+export interface ReceiveRun {
+  name: string;
+  /** Pasta criada (ou, se nada mudou, a do último recebimento). */
+  dest: string;
+  files: number;
+  bytes: number;
+  skippedCount: number;
+  unchanged: boolean;
 }
 
 export interface ArchiveRun {

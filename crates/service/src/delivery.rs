@@ -183,6 +183,7 @@ impl Service {
             hashed_files: 0,
             duration_ms: elapsed_ms(started),
             first_run: p.first_run,
+            receive: None,
             archive: Some(ArchivePreview {
                 name: version_name(&p.loaded.job.name, now, format, |_| false),
                 format,
@@ -228,7 +229,7 @@ impl Service {
         }
 
         // RN-53, RN-67: o temporário nunca passa da soma das entradas (+ pequena sobra).
-        let staging = self.staging_dir(id)?;
+        let staging = self.staging_dir(&id.to_string())?;
         let (_, _, estimated) = p.totals();
         if let Ok(available) = fs4::available_space(&staging)
             && available < estimated.saturating_add(DISK_RESERVE_BYTES)
@@ -411,10 +412,11 @@ impl Service {
         Ok((status, report, archive))
     }
 
-    /// Pasta dos temporários da tarefa. Sobras de uma execução interrompida são
-    /// apagadas — a trava da tarefa (RN-90) garante que nenhuma outra as usa.
-    pub(crate) fn staging_dir(&self, job_id: Uuid) -> ServiceResult<PathBuf> {
-        let dir = self.paths.data_dir.join("tmp").join(job_id.to_string());
+    /// Pasta de temporários de uma tarefa (ID) ou das operações avulsas (`avulsos`).
+    /// Sobras de uma operação interrompida são apagadas — quem chama tem a trava
+    /// correspondente (RN-90, ou a vaga única de compactação), então nada mais as usa.
+    pub(crate) fn staging_dir(&self, key: &str) -> ServiceResult<PathBuf> {
+        let dir = self.paths.data_dir.join("tmp").join(key);
         ensure_private_dir(&dir)?;
         if let Ok(items) = std::fs::read_dir(&dir) {
             for item in items.flatten() {

@@ -34,7 +34,11 @@ const form = reactive({
   delivery: (delivery?.kind ?? "files") as Delivery["kind"],
   format: (archived?.format ?? "zip") as ArchiveFormat,
   retention: { ...(archived?.retention ?? DEFAULT_RETENTION) },
+  /** RN-107: pasta do computador onde as versões recebidas são descompactadas. */
+  target: delivery?.kind === "receive" ? delivery.target : "",
 });
+
+const receiving = computed(() => form.delivery === "receive");
 
 const usableAccounts = computed(() => props.accounts);
 const retentionValid = computed(() => {
@@ -45,10 +49,10 @@ const retentionValid = computed(() => {
 const canSave = computed(
   () =>
     form.name.trim() &&
-    form.sources.length > 0 &&
     form.accountId &&
     form.path.trim() &&
-    (form.delivery === "files" || retentionValid.value),
+    (receiving.value ? !!form.target : form.sources.length > 0) &&
+    (form.delivery !== "archive" || retentionValid.value),
 );
 
 function addSources(paths: string[]) {
@@ -65,21 +69,34 @@ async function addFiles() {
   addSources(await pickFiles("Adicionar arquivos"));
 }
 
+async function chooseTarget() {
+  form.target = (await pickFolder("Descompactar as versões recebidas em…")) ?? form.target;
+}
+
+function deliveryDraft(): Delivery {
+  switch (form.delivery) {
+    case "archive":
+      return { kind: "archive", format: form.format, retention: { ...form.retention } };
+    case "receive":
+      return { kind: "receive", target: form.target };
+    default:
+      return { kind: "files" };
+  }
+}
+
 function submit() {
   emit("save", {
     id: props.job?.id ?? null,
     name: form.name,
     enabled: form.enabled,
-    sources: form.sources,
-    exclude: form.exclude.split("\n"),
-    includeSensitive: form.includeSensitive,
+    // RN-110: quem recebe não tem fontes.
+    sources: receiving.value ? [] : form.sources,
+    exclude: receiving.value ? [] : form.exclude.split("\n"),
+    includeSensitive: receiving.value ? false : form.includeSensitive,
     sync: {
       accountId: form.accountId,
       path: form.path,
-      delivery:
-        form.delivery === "archive"
-          ? { kind: "archive", format: form.format, retention: { ...form.retention } }
-          : { kind: "files" },
+      delivery: deliveryDraft(),
       mode: form.mode,
     },
   });
@@ -95,7 +112,34 @@ function submit() {
       <input v-model="form.name" maxlength="64" placeholder="Ex.: Documentos" required />
     </label>
 
-    <div class="field">
+    <fieldset class="field">
+      <legend>O que a tarefa faz</legend>
+      <label class="choice">
+        <input v-model="form.delivery" type="radio" value="files" />
+        <span>
+          <strong>Enviar arquivo por arquivo</strong> — o destino fica igual às pastas; da segunda
+          vez em diante, só vai o que mudou.
+        </span>
+      </label>
+      <label class="choice">
+        <input v-model="form.delivery" type="radio" value="archive" />
+        <span>
+          <strong>Enviar compactado</strong> — tudo vira um único arquivo com data no nome
+          (ex.: <code>{{ form.name || "Tarefa" }}_2026-10-14_02-00-05.zip</code>), mantendo versões
+          anteriores. Bom para backup de pastas com muitos arquivos pequenos.
+        </span>
+      </label>
+      <label class="choice">
+        <input v-model="form.delivery" type="radio" value="receive" />
+        <span>
+          <strong>Receber e descompactar</strong> — baixa a versão mais recente de uma pasta do
+          destino (enviada pelo Syncly, deste ou de outro computador) e a descompacta numa
+          <strong>pasta nova</strong> aqui. Nada existente é substituído.
+        </span>
+      </label>
+    </fieldset>
+
+    <div v-if="!receiving" class="field">
       <span>Fontes (pastas e arquivos)</span>
       <ul v-if="form.sources.length" class="list compact">
         <li v-for="(src, i) in form.sources" :key="src" class="list-row">
@@ -113,7 +157,7 @@ function submit() {
 
     <div class="grid-2">
       <label class="field">
-        <span>Conta de destino</span>
+        <span>{{ receiving ? "Conta de origem" : "Conta de destino" }}</span>
         <select v-model="form.accountId" required>
           <option v-if="!usableAccounts.length" value="" disabled>Nenhuma conta disponível</option>
           <option v-for="a in usableAccounts" :key="a.id" :value="a.id">{{ a.label }}</option>
@@ -123,26 +167,23 @@ function submit() {
         </small>
       </label>
       <label class="field">
-        <span>Pasta no destino</span>
+        <span>{{ receiving ? "Pasta no destino (onde estão as versões)" : "Pasta no destino" }}</span>
         <input v-model="form.path" placeholder="Ex.: Backup/Documentos" required />
       </label>
     </div>
 
-    <fieldset class="field">
-      <legend>Como enviar</legend>
-      <label class="choice">
-        <input v-model="form.delivery" type="radio" value="files" />
-        <span><strong>Arquivo por arquivo</strong> — o destino fica igual às pastas; da segunda vez em diante, só vai o que mudou.</span>
-      </label>
-      <label class="choice">
-        <input v-model="form.delivery" type="radio" value="archive" />
-        <span>
-          <strong>Compactado</strong> — tudo vira um único arquivo com data no nome
-          (ex.: <code>{{ form.name || "Tarefa" }}_2026-10-14_02-00-05.zip</code>), mantendo versões
-          anteriores. Bom para backup de pastas com muitos arquivos pequenos.
-        </span>
-      </label>
-    </fieldset>
+    <div v-if="receiving" class="field">
+      <span>Pasta no computador</span>
+      <div class="row">
+        <button class="btn" type="button" @click="chooseTarget">Escolher pasta…</button>
+        <code v-if="form.target">{{ form.target }}</code>
+        <span v-else class="muted small">nenhuma pasta escolhida</span>
+      </div>
+      <small class="muted">
+        Cada versão recebida vira uma pasta nova aqui dentro, com o nome da versão. Se a mais
+        recente já foi recebida, nada é feito.
+      </small>
+    </div>
 
     <template v-if="form.delivery === 'archive'">
       <label class="field">
@@ -181,7 +222,7 @@ function submit() {
       </fieldset>
     </template>
 
-    <fieldset v-else class="field">
+    <fieldset v-else-if="form.delivery === 'files'" class="field">
       <legend>Modo</legend>
       <label class="choice">
         <input v-model="form.mode" type="radio" value="upload" />
@@ -196,18 +237,20 @@ function submit() {
       </label>
     </fieldset>
 
-    <label class="field">
-      <span>Exclusões (uma por linha, sintaxe do .gitignore)</span>
-      <textarea v-model="form.exclude" rows="3" placeholder="node_modules/&#10;*.iso" />
-    </label>
+    <template v-if="!receiving">
+      <label class="field">
+        <span>Exclusões (uma por linha, sintaxe do .gitignore)</span>
+        <textarea v-model="form.exclude" rows="3" placeholder="node_modules/&#10;*.iso" />
+      </label>
 
-    <label class="choice">
-      <input v-model="form.includeSensitive" type="checkbox" />
-      <span>
-        Incluir arquivos sensíveis (<code>.ssh</code>, <code>.env</code>, chaves…).
-        <strong>Não recomendado.</strong>
-      </span>
-    </label>
+      <label class="choice">
+        <input v-model="form.includeSensitive" type="checkbox" />
+        <span>
+          Incluir arquivos sensíveis (<code>.ssh</code>, <code>.env</code>, chaves…).
+          <strong>Não recomendado.</strong>
+        </span>
+      </label>
+    </template>
 
     <label class="choice">
       <input v-model="form.enabled" type="checkbox" />

@@ -12,7 +12,7 @@ estão implementadas — o estado de cada fase está em [ARQUITETURA.md §13](AR
 |---|---|
 | **Conta** | Um destino de armazenamento autenticado: uma conta Google Drive ou uma pasta local (HD externo, NAS montado). |
 | **Pasta raiz do app** | Pasta `Syncly/` criada pelo app na conta. Tudo que o app grava fica dentro dela. |
-| **Tarefa** | Conjunto de **fontes** (pastas e/ou arquivos) + **destino** + **como enviar**: arquivo por arquivo (sincronização) ou compactado (versões), com um agendamento. |
+| **Tarefa** | Uma rotina com um agendamento. Envia **fontes** (pastas e/ou arquivos) a um **destino** — arquivo por arquivo (sincronização) ou compactado (versões) — ou **recebe** de lá a versão mais recente. |
 | **Fonte** | Caminho absoluto local de uma pasta ou arquivo incluído na tarefa. |
 | **Índice** | Último estado sincronizado de cada arquivo (tamanho, mtime, MD5 local, ID e MD5 remotos). |
 | **Plano** | Lista de ações calculada antes de executar (enviar, atualizar, mover para lixeira…). |
@@ -33,13 +33,13 @@ estão implementadas — o estado de cada fase está em [ARQUITETURA.md §13](AR
 ## 3. Tarefas
 
 - **RN-10** — Nome obrigatório, 1 a 64 caracteres, sem caracteres de controle, único na configuração (sem diferenciar maiúsculas).
-- **RN-11** — Fontes: de 1 a 32 caminhos **absolutos**, sem `..`, únicos na tarefa.
+- **RN-11** — Fontes: de 1 a 32 caminhos **absolutos**, sem `..`, únicos na tarefa (tarefas que recebem não têm fontes, RN-110).
 - **RN-12** — Fontes não podem ser pastas de sistema (`/`, `/proc`, `/sys`, `/dev`, `/run`) nem estar dentro das pastas de dados/config do próprio app. Se uma fonte **contém** as pastas do app (ex.: a pasta pessoal inteira), elas são puladas automaticamente.
 - **RN-13** — Uma fonte não pode estar dentro de outra fonte da mesma tarefa.
 - **RN-14** — O **nome final** (basename) de cada fonte deve ser único na tarefa, pois vira a pasta/arquivo de primeiro nível no destino. Ex.: `~/Documentos` e `~/notas.md` → `Syncly/<destino>/Documentos/…` e `Syncly/<destino>/notas.md`.
-- **RN-15** — Toda tarefa tem um destino e uma forma de envio: **arquivo por arquivo** (seção 5, padrão) ou **compactado** (seção 7).
+- **RN-15** — Toda tarefa tem um destino e faz uma de três coisas: **envia arquivo por arquivo** (seção 5, padrão), **envia compactado** (seção 7) ou **recebe e descompacta** (RN-107).
 - **RN-16** — Destino: conta existente + caminho relativo à pasta raiz, com 1 a 32 componentes, sem `.`/`..`, sem caracteres de controle, até 255 bytes por componente.
-- **RN-17** — Duas tarefas não podem ter destinos sobrepostos na mesma conta (iguais ou um dentro do outro) — cada pasta remota tem um único "dono".
+- **RN-17** — Duas tarefas não podem ter destinos sobrepostos na mesma conta (iguais ou um dentro do outro) — cada pasta remota tem um único "dono". Tarefas que recebem só leem, então ficam de fora: podem apontar para a pasta de uma tarefa que envia.
 - **RN-18** — Tarefa desativada não roda (nem manual nem agendada) e seus timers são removidos.
 - **RN-19** — Com destino numa conta local, a pasta de destino não pode ficar dentro de uma fonte da tarefa, nem conter uma fonte — senão a cada execução a cópia copiaria a si mesma.
 
@@ -127,9 +127,12 @@ Tela **Tarefas → Versões → Restaurar…** ou `syncly restore <tarefa> --to 
 - **RN-57** — Restaurar uma versão a descompacta sempre numa **pasta nova** `<nome da versão>/` dentro da pasta escolhida (`(2)`, `(3)`… se já existir; RN-65) — nunca por cima de arquivos existentes. A pasta escolhida não pode ficar dentro de uma fonte da tarefa (a próxima versão levaria a restauração junto) nem das pastas do app. A restauração conta como execução da tarefa: usa a trava dela (RN-90) — a retenção não remove a versão no meio do caminho — e vai para o histórico. A rotina de recebimento (RN-107) segue a mesma regra.
 - **RN-58** — Antes de descompactar, a versão é conferida: precisa estar intacta no destino (nome e tamanho registrados, RN-55) e o arquivo baixado precisa ter o **mesmo checksum registrado no envio** — o que também pega uma versão trocada por outra de mesmo nome e tamanho. Se não conferir, nada é descompactado. Mesmo conferido, o conteúdo é tratado como não confiável (RN-66).
 
-### Rotina de recebimento *(planejado — fase 2d)*
+### Rotina de recebimento
 
-- **RN-107** — Uma tarefa poderá **receber** em vez de enviar: busca a versão mais recente de uma tarefa compactada — só arquivos que o Syncly enviou (escopo `drive.file`, SEG-03), inclusive a partir de outro computador com o mesmo projeto do Google Cloud (a confirmar na implementação) — e a descompacta no computador, **sempre numa pasta nova a cada recebimento** (RN-57), nunca por cima. Se a versão mais recente já foi recebida, nada é feito.
+Tarefa com **Receber e descompactar** (tela Tarefas) — `syncly run <tarefa>`.
+
+- **RN-107** — Uma tarefa que **recebe** busca, na pasta de destino, a versão mais recente — o arquivo com nome de versão (`<tarefa>_AAAA-MM-DD_HH-MM-SS[ (n)].<ext>`, RN-50) de data mais nova; outros arquivos são ignorados, e nomes repetidos bloqueiam (RN-34). Ela é baixada (checksum conferido pelo provedor, RN-106) e descompactada **sempre numa pasta nova** `<nome da versão>/` na pasta do computador (RN-57, RN-65 a RN-67), nunca por cima. Se a versão mais recente já foi recebida (mesmo item, nome, tamanho e, quando houver, conteúdo), nada é feito. A pasta do computador ausente bloqueia a execução (RN-40: disco desmontado); a primeira execução pede confirmação (RN-36) e a agendada nunca confirma sozinha (RN-43). No Drive, só enxerga o que o Syncly enviou (escopo `drive.file`, SEG-03) — inclusive de outro computador com o mesmo projeto do Google Cloud (ainda não testado com duas máquinas).
+- **RN-110** — Uma tarefa que recebe **não tem fontes** nem exclusões. A pasta do computador segue as restrições de uma fonte (RN-12): caminho absoluto, fora das pastas de sistema e das pastas do app.
 
 ## 8. Compactação e descompactação
 
@@ -191,10 +194,11 @@ Tela **Compactar** e `syncly archive create|extract`.
 
 ## 13. Transferências avulsas
 
-Enviar ou baixar um arquivo específico, fora de uma tarefa (tela **Arquivos** e `syncly remote`).
+Enviar ou baixar um arquivo específico — ou uma pasta compactada — fora de uma tarefa (tela
+**Arquivos** e `syncly remote`).
 
 - **RN-104** — Envio cria as pastas que faltarem dentro de `Syncly/`, mas **nunca sobrescreve nem duplica**: se já existir um item com o mesmo nome na pasta, o envio é recusado.
 - **RN-105** — Os filtros de arquivos sensíveis e temporários (RN-21, RN-22) valem também para o envio avulso.
 - **RN-106** — Download **nunca sobrescreve**: se o nome já existir na pasta local, grava como `nome (2).ext`, `nome (3).ext`… Todo envio e download é verificado por checksum (RN-37) e o download é gravado de forma atômica. Documentos nativos do Google (sem conteúdo binário) não são baixados.
-- **RN-108** — *(planejado — fase 2d)* **Baixar e descompactar**: um `.zip`/`.tar.*` da conta vai direto para uma pasta nova no computador, com as proteções de RN-65 a RN-67.
-- **RN-109** — *(planejado — fase 2d)* **Enviar pasta compactada**: uma pasta escolhida é compactada (RN-60 a RN-64) e enviada como um único arquivo, sem criar tarefa; vale RN-104 (nunca sobrescreve).
+- **RN-108** — **Baixar e descompactar** (`remote get --extract`): um `.zip`/`.tar.*` da conta é baixado (checksum conferido) e descompactado direto numa pasta nova no computador, com as proteções de RN-65 a RN-67. Formato desconhecido é recusado antes de baixar.
+- **RN-109** — **Enviar pasta compactada** (`remote put --compress`): pastas/arquivos são compactados (RN-60 a RN-64) num temporário do app e enviados como um único arquivo `<nome>.<ext>`, sem criar tarefa. Vale RN-104 (nunca sobrescreve nem duplica, conferido antes e depois de compactar), RN-105 (sensíveis **sempre** ficam de fora) e a reserva de espaço da conta (RN-46).

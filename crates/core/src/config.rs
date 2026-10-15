@@ -202,11 +202,13 @@ impl AppConfig {
             issues.extend(self.validate_local_destination(job));
         }
 
-        // RN-17: cada pasta remota tem um único dono.
+        // RN-17: cada pasta remota tem um único dono. Quem só recebe (RN-110) não é dono.
         let syncs: Vec<_> = self
             .jobs
             .iter()
-            .filter_map(|j| j.sync.as_ref().map(|s| (j, &s.destination)))
+            .filter_map(|j| j.sync.as_ref().map(|s| (j, s)))
+            .filter(|(_, s)| !s.delivery.is_receive())
+            .map(|(j, s)| (j, &s.destination))
             .collect();
         for (i, (a, da)) in syncs.iter().enumerate() {
             for (b, db) in &syncs[i + 1..] {

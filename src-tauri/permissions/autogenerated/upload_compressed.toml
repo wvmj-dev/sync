@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-upload-compressed"
+description = "Enables the upload_compressed command without any pre-configured scope."
+commands.allow = ["upload_compressed"]
+
+[[permission]]
+identifier = "deny-upload-compressed"
+description = "Denies the upload_compressed command without any pre-configured scope."
+commands.deny = ["upload_compressed"]

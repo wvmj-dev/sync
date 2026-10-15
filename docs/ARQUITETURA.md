@@ -103,7 +103,7 @@ src-tauri ──► service ──► gdrive ──► core
 │   │   ├── lock.rs            # trava exclusiva por tarefa
 │   │   └── paths.rs           # diretórios XDG
 │   ├── gdrive/src/            # auth, oauth, client, provider, endpoints, query, error
-│   ├── service/src/           # service (tarefas/execução), delivery (envio compactado), restore, google, transfers, archive, secrets, dto, logging
+│   ├── service/src/           # service (tarefas/execução), delivery (envio compactado), restore, receive, google, transfers, archive, secrets, dto, logging
 │   └── cli/src/
 ├── src-tauri/
 │   ├── capabilities/default.json  # allowlist de comandos da janela
@@ -124,8 +124,8 @@ src-tauri ──► service ──► gdrive ──► core
 |---|---|---|---|
 | Configuração (contas, tarefas, preferências) | `~/.config/syncly/config.toml` | TOML versionado (`version = 1`) | `0600` |
 | Cliente OAuth do Google | `~/.config/syncly/google-client.json` | JSON baixado do Google Cloud | `0600` |
-| Estado (índice, execuções, versões enviadas) | `~/.local/share/syncly/state.db` | SQLite (WAL) | dir `0700` |
-| Temporários do envio compactado | `~/.local/share/syncly/tmp/<tarefa>/.syncly-tmp-*` | apagados ao fim de cada execução | dir `0700` |
+| Estado (índice, execuções, versões enviadas e recebidas) | `~/.local/share/syncly/state.db` | SQLite (WAL) | dir `0700` |
+| Temporários (envio compactado, restauração, recebimento, avulsos) | `~/.local/share/syncly/tmp/<tarefa ou avulsos>/.syncly-tmp-*` | apagados ao fim de cada execução | dir `0700` |
 | Logs | `~/.local/state/syncly/logs/` (`syncly-desktop.AAAA-MM-DD.log`, `syncly-cli.…`) | texto, rotação diária, 14 dias; nível via `SYNCLY_LOG` | dir `0700` |
 | Travas | `$XDG_RUNTIME_DIR/syncly/` | arquivo + `flock` | dir `0700` |
 | Tokens OAuth e chaves de criptografia | Keyring do sistema (Secret Service: GNOME Keyring/KWallet) | — | cifrado pelo SO |
@@ -191,8 +191,19 @@ versão está intacta, baixa para `tmp/`, compara o checksum com o registrado no
 então descompacta numa pasta nova — pela mesma extração defensiva da tela Compactar
 (SEG-26). Vai para o histórico como execução `restore`.
 
-Planejado: receber (fase 2d — rotina de recebimento, baixar e descompactar, enviar pasta
-compactada; RN-107 a RN-109) e criptografia `age` com manifesto (fase 2e).
+**Receber** (`service/src/receive.rs`, RN-107, `Delivery::Receive`): a tarefa lista a pasta
+de origem sem ler conteúdo (`list_children_meta`), escolhe a versão mais recente pelo nome
+(`archive::versions::latest_version`, função pura), compara com a última recebida (tabela
+`received` do `state.db`) e, se for nova, reaproveita o "baixar → conferir → descompactar
+numa pasta nova" da restauração. Guarda própria (`guard::evaluate_receive`): pasta do
+computador ausente ou nenhuma versão bloqueiam; primeira vez pede confirmação. Histórico:
+execução `receive`.
+
+**Avulsos** (`service/src/transfers.rs`, tela Arquivos): *baixar e descompactar* (RN-108) e
+*enviar pasta compactada* (RN-109) usam a vaga única de compactação (progresso
+`archive-progress`, `cancel_archive`) e temporários em `tmp/avulsos/`.
+
+Planejado: criptografia `age` com manifesto (fase 2e).
 
 ## 8. Agendamento *(planejado — fase 3)*
 
@@ -278,6 +289,7 @@ compactada; RN-107 a RN-109) e criptografia `age` com manifesto (fase 2e).
 | TOML (config) + SQLite (estado) | Tudo em JSON / tudo em SQLite | Config legível e portátil; estado transacional e rápido. |
 | ZIP, TAR, TAR.GZ e TAR.ZST, à escolha (avulso e nas tarefas) | Um formato só | ZIP abre em qualquer sistema; TAR.GZ é o padrão do Linux; zstd é o mais rápido e compacto. |
 | Backup = forma de envio da tarefa (compactado, com versões) | Tarefa com "sincronização" e "backup" separados, pasta `Backups/` reservada | Um conceito a menos e um agendamento por tarefa; local ou remoto vem da conta de destino. |
+| Receber = outra forma da tarefa (`Delivery::Receive`), sempre numa pasta nova | Sincronização bidirecional; descompactar por cima | Funciona com `drive.file` (só o que o Syncly enviou), não precisa de índice nem de resolução de conflitos e nunca substitui nada no computador. |
 | Versões registradas no `state.db` | Reconhecer versões pelo padrão do nome | A retenção nunca toca um arquivo que o app não criou, mesmo com nome parecido (RN-55). |
 | `age` para criptografia | GPG; AES "caseiro" | Formato moderno e auditado, streaming, chave pública permite backup automático sem segredo em memória. |
 | `rustls` | OpenSSL | Sem dependência nativa, implementação memory-safe. |
@@ -301,7 +313,7 @@ compactada; RN-107 a RN-109) e criptografia `age` com manifesto (fase 2e).
 | 2a | Compactar e descompactar (zip, tar, tar.gz, tar.zst) | ✅ |
 | 2b | Envio compactado: versões com data, retenção, backup local/remoto | ✅ |
 | 2c | Restaurar versão (baixar, conferir e descompactar numa pasta nova) | ✅ |
-| 2d | Receber: rotina de recebimento, baixar e descompactar, enviar pasta compactada (RN-107 a RN-109) | |
+| 2d | Receber: rotina de recebimento, baixar e descompactar, enviar pasta compactada (RN-107 a RN-110) | ✅ |
 | 2e | Criptografia (age) e manifesto das versões | |
 | 3 | Agendamento (systemd), notificações, bandeja | |
 | 4 | Changes API, download/bidirecional (requer decisão sobre escopo — ver SEG-03) | |

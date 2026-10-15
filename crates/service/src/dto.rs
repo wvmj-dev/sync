@@ -135,6 +135,37 @@ pub struct PlanPreview {
     pub first_run: bool,
     /// Presente quando a tarefa envia compactado; aí `stats` e `actions` ficam vazios.
     pub archive: Option<ArchivePreview>,
+    /// Presente quando a tarefa recebe; aí `stats` e `actions` ficam vazios.
+    pub receive: Option<ReceivePreview>,
+}
+
+/// O que uma execução de recebimento faria agora (RN-107).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReceivePreview {
+    /// Versão mais recente no destino; `None` se não houver nenhuma.
+    pub name: Option<String>,
+    pub size: Option<u64>,
+    pub modified_at: Option<DateTime<Utc>>,
+    /// Já foi recebida — nada será feito.
+    pub already_received: bool,
+    /// Pasta do computador onde a pasta nova será criada.
+    pub target: String,
+}
+
+/// Resultado de uma execução de recebimento.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReceiveRun {
+    pub name: String,
+    /// Pasta criada (ou, se nada mudou, a do último recebimento).
+    pub dest: String,
+    pub files: u64,
+    pub bytes: u64,
+    /// RN-66: entradas ignoradas por segurança.
+    pub skipped_count: usize,
+    /// A versão mais recente já tinha sido recebida.
+    pub unchanged: bool,
 }
 
 /// O que uma execução compactada faria agora (RN-50 a RN-59).
@@ -185,6 +216,22 @@ pub struct VersionItem {
     pub path: String,
 }
 
+/// "Enviar compactado" avulso (RN-109): compacta e envia um único arquivo.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UploadCompressedRequest {
+    pub account_id: Uuid,
+    /// Pastas e/ou arquivos locais (1 a 32).
+    pub inputs: Vec<PathBuf>,
+    /// Pasta dentro de `Syncly/` (criada se faltar); `""` = a raiz.
+    #[serde(default)]
+    pub remote_dir: String,
+    pub format: ArchiveFormat,
+    /// Nome sem extensão; padrão: o da única entrada, ou "arquivos".
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
 /// Item listado numa conta (arquivo ou pasta dentro de `Syncly/`).
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -214,6 +261,8 @@ pub struct RunReport {
     pub duration_ms: u64,
     /// Presente quando a tarefa envia compactado.
     pub archive: Option<ArchiveRun>,
+    /// Presente quando a tarefa recebe.
+    pub receive: Option<ReceiveRun>,
 }
 
 pub const MAX_REPORT_FAILURES: usize = 50;
@@ -228,6 +277,7 @@ impl RunReport {
             failure_count,
             duration_ms,
             archive: None,
+            receive: None,
         }
     }
 }

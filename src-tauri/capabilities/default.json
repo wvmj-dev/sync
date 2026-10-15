@@ -19,6 +19,8 @@
     "allow-list-remote",
     "allow-upload-file",
     "allow-download-file",
+    "allow-download-and-extract",
+    "allow-upload-compressed",
     "allow-run-job",
     "allow-cancel-run",
     "allow-list-versions",

@@ -16,7 +16,7 @@ use serde::Serialize;
 
 pub use create::{CreateReport, CreateRequest, create};
 pub use extract::{ExtractReport, ExtractRequest, SkippedEntry, extract};
-pub use versions::{fingerprint, version_name};
+pub use versions::{VersionStamp, fingerprint, latest_version, parse_version_name, version_name};
 
 pub use crate::domain::ArchiveFormat;
 use crate::domain::rel_path::validate_name;

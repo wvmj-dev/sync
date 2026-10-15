@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { RouterLink } from "vue-router";
-import { api, errorMessage, pickFiles, pickFolder } from "../api";
-import type { RemoteItem } from "../api/types";
+import { api, errorMessage, onArchiveProgress, pickFiles, pickFolder } from "../api";
+import type { ArchiveFormat, ArchiveProgress, RemoteItem } from "../api/types";
 import { useAppStore } from "../stores/app";
-import { formatBytes, formatDate } from "../utils/format";
+import { archiveFormats, formatBytes, formatDate } from "../utils/format";
 
 const store = useAppStore();
 
@@ -14,7 +14,26 @@ const path = ref("");
 const items = ref<RemoteItem[]>([]);
 const loading = ref(false);
 const busy = ref<string | null>(null);
-const notice = ref<{ kind: "ok" | "danger"; text: string } | null>(null);
+const notice = ref<{ kind: "ok" | "warning" | "danger"; text: string } | null>(null);
+/** Compactar/descompactar em andamento: mostra progresso e permite cancelar. */
+const packing = ref(false);
+const progress = ref<ArchiveProgress | null>(null);
+const format = ref<ArchiveFormat>("zip");
+
+const percent = computed(() => {
+  const p = progress.value;
+  return p && p.bytesTotal > 0 ? Math.min(100, (p.bytesDone / p.bytesTotal) * 100) : null;
+});
+
+let stopListening: (() => void) | null = null;
+onMounted(async () => {
+  stopListening = await onArchiveProgress((p) => {
+    if (packing.value) progress.value = p;
+  });
+});
+onUnmounted(() => stopListening?.());
+
+const ARCHIVE_NAME = /\.(zip|tar|tar\.gz|tgz|tar\.zst|tzst)$/i;
 
 const crumbs = computed(() => {
   const parts = path.value ? path.value.split("/") : [];
@@ -73,6 +92,60 @@ async function upload() {
   await load();
 }
 
+/** Roda uma operação de compactação com progresso; erros viram aviso. */
+async function packed<T>(label: string, op: () => Promise<T>): Promise<T | null> {
+  busy.value = label;
+  packing.value = true;
+  progress.value = null;
+  notice.value = null;
+  try {
+    return await op();
+  } catch (e) {
+    notice.value = { kind: "danger", text: errorMessage(e) };
+    return null;
+  } finally {
+    busy.value = null;
+    packing.value = false;
+  }
+}
+
+/** RN-109: a pasta vira um único arquivo; nunca sobrescreve; sensíveis ficam de fora. */
+async function uploadFolder() {
+  const folder = await pickFolder("Compactar e enviar para Syncly/" + path.value);
+  if (!folder) return;
+  const name = folder.split("/").pop() ?? folder;
+  const item = await packed(`Compactando e enviando ${name}…`, () =>
+    api.uploadCompressed({
+      accountId: accountId.value,
+      inputs: [folder],
+      remoteDir: path.value,
+      format: format.value,
+      name: null,
+    }),
+  );
+  if (item) {
+    notice.value = { kind: "ok", text: `Compactado, enviado e verificado: Syncly/${item.path}` };
+    await load();
+  }
+}
+
+/** RN-108: descompacta numa pasta nova, nunca por cima. */
+async function downloadExtract(item: RemoteItem) {
+  const dir = await pickFolder(`Descompactar "${item.name}" em…`);
+  if (!dir) return;
+  const result = await packed(`Baixando e descompactando ${item.name}…`, () =>
+    api.downloadAndExtract(accountId.value, item.path, dir),
+  );
+  if (!result) return;
+  const skipped = result.skippedCount
+    ? ` ${result.skippedCount} entrada(s) ignorada(s) por segurança.`
+    : "";
+  notice.value = {
+    kind: result.skippedCount ? "warning" : "ok",
+    text: `Descompactado em ${result.dest} — ${result.files} arquivo(s).${skipped}`,
+  };
+}
+
 async function download(item: RemoteItem) {
   const dir = await pickFolder(`Salvar "${item.name}" em…`);
   if (!dir) return;
@@ -110,6 +183,18 @@ async function download(item: RemoteItem) {
         <button class="btn btn-primary" type="button" :disabled="!!busy" @click="upload">
           Enviar arquivo…
         </button>
+        <select v-model="format" aria-label="Formato da pasta compactada" :disabled="!!busy">
+          <option v-for="f in archiveFormats" :key="f.value" :value="f.value">{{ f.label }}</option>
+        </select>
+        <button
+          class="btn"
+          type="button"
+          :disabled="!!busy"
+          title="Compacta a pasta e envia um único arquivo (arquivos sensíveis ficam de fora)"
+          @click="uploadFolder"
+        >
+          Enviar pasta compactada…
+        </button>
       </div>
     </div>
 
@@ -125,7 +210,23 @@ async function download(item: RemoteItem) {
       <span>{{ notice.text }}</span>
       <button class="btn btn-ghost" type="button" @click="notice = null">Fechar</button>
     </div>
-    <p v-if="busy" class="muted">{{ busy }}</p>
+    <section v-if="packing" class="run" aria-live="polite">
+      <div class="run-head">
+        <strong>{{ busy }}</strong>
+        <button class="btn btn-ghost" type="button" @click="api.cancelArchive()">Cancelar</button>
+      </div>
+      <div class="progress" role="progressbar">
+        <div :style="{ width: `${percent ?? 100}%` }" :class="{ indeterminate: percent === null }"></div>
+      </div>
+      <p v-if="progress" class="muted small">
+        {{ formatBytes(progress.bytesDone) }}<template v-if="progress.bytesTotal">
+          de {{ formatBytes(progress.bytesTotal) }}</template>
+      </p>
+      <p v-if="progress?.current" class="muted small run-current">
+        <code>{{ progress.current }}</code>
+      </p>
+    </section>
+    <p v-else-if="busy" class="muted">{{ busy }}</p>
 
     <p v-if="loading" class="muted">Carregando…</p>
     <p v-else-if="!items.length" class="muted">Pasta vazia. Use "Enviar arquivo…" para começar.</p>
@@ -165,6 +266,15 @@ async function download(item: RemoteItem) {
               @click="download(item)"
             >
               Baixar
+            </button>
+            <button
+              v-if="item.kind === 'file' && item.downloadable && ARCHIVE_NAME.test(item.name)"
+              class="btn"
+              type="button"
+              :disabled="!!busy"
+              @click="downloadExtract(item)"
+            >
+              Baixar e descompactar
             </button>
           </td>
         </tr>

@@ -8,9 +8,9 @@ detalhado fica em [`.agents/`](.agents/README.md) e deve ser lido **sob demanda*
 
 App desktop para sincronizar e fazer backup de pastas com o Google Drive (outros
 provedores depois). Tauri 2 + Rust (núcleo) + Vue 3/TypeScript (UI) + CLI `syncly`.
-Fases concluídas: **0, 1a, 1b, 2a, 2b e 2c** — sincronização (Drive e pasta local), transferências
-avulsas, compactação, envio compactado com versões (backup) e restauração funcionando. Próximas:
-**2d** (receber: rotina de recebimento, baixar e descompactar) e **1c** (status). Roadmap em
+Fases concluídas: **0, 1a, 1b e 2a a 2d** — sincronização (Drive e pasta local), transferências
+avulsas, compactação, envio compactado com versões (backup), restauração e recebimento
+funcionando. Próximas: **1c** (status), **3** (agendamento) e **2e** (criptografia). Roadmap em
 `docs/ARQUITETURA.md` §13.
 
 Fonte da verdade — leia antes de mudar comportamento:
@@ -23,17 +23,18 @@ Fonte da verdade — leia antes de mudar comportamento:
 
 Não presuma que algo existe só porque está nos docs — os docs descrevem o projeto completo.
 
-| Já funciona (fases 0, 1a, 1b, 2a, 2b e 2c) | Ainda **não** existe |
+| Já funciona (fases 0, 1a, 1b e 2a a 2d) | Ainda **não** existe |
 |---|---|
 | Domínio e validações; **executor** (`sync/executor.rs`) com progresso, cancelamento e histórico | Paralelizar a listagem remota (hoje uma pasta por vez) |
 | Varredura local com filtros, `.syncignore`, bloqueios e exclusões | Status / última modificação (RN-100 a RN-103) |
-| Planejador, guardas, política de retry, retenção (funções puras) | Rotina de recebimento, baixar e descompactar, enviar pasta compactada (RN-107 a RN-109) |
+| Planejador, guardas, política de retry, retenção (funções puras) | Testar o recebimento entre dois computadores (RN-107) |
 | Estado em SQLite, config TOML, trava por tarefa, logs em arquivo | Agendamento (systemd), notificações, bandeja |
 | `LocalProvider` e `GDriveProvider` (Drive: OAuth PKCE, keyring, limitador, retry, envio retomável) | Changes API, download/bidirecional |
 | **Prévia** de sincronização (CLI e UI); enviar/listar/baixar arquivos avulsos (`syncly remote`, tela Arquivos) | Testes de frontend |
 | Compactar/descompactar zip e tar (`core/src/archive/`, `syncly archive`, tela Compactar) | |
 | **Envio compactado** (`Delivery::Archive`, `service/src/delivery.rs`): versões com data, retenção, pula se nada mudou | Criptografia, manifesto |
 | **Restaurar versão** (`service/src/restore.rs`, `syncly versions`/`restore`, tela Tarefas → Versões) | |
+| **Receber** (`Delivery::Receive`, `service/src/receive.rs`); avulsos "baixar e descompactar" e "enviar pasta compactada" (`transfers.rs`, `remote get --extract`/`put --compress`) | |
 
 `docs/REGRAS_DE_NEGOCIO.md` marca como *(planejado)* as seções e regras que ainda não existem.
 
@@ -95,8 +96,9 @@ Violar qualquer uma é bug de segurança, mesmo que o código "funcione".
 5. **Frontend:** proibido `v-html`; `invoke` só dentro de `ui/src/api/` (SEG-32).
 6. **`unsafe` proibido** (lint `forbid` no workspace).
 7. **Decisões de sincronização só no planejador** (`crates/core/src/sync/planner.rs`, RN-30).
-   O executor apenas aplica o plano. No envio compactado, as decisões ficam em funções puras
-   (`guard::evaluate_archive`, `archive::versions`, `backup::retention`).
+   O executor apenas aplica o plano. No envio compactado e no recebimento, as decisões ficam em
+   funções puras (`guard::evaluate_archive`/`evaluate_receive`, `archive::versions`,
+   `backup::retention`).
 8. **Nunca tocar item remoto fora do índice** (RN-31) — no envio compactado, fora das versões
    registradas (RN-55); itens ilegíveis ou excluídos pelos filtros nunca vão para a lixeira
    (RN-27, RN-28).

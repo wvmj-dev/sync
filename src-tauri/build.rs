@@ -13,6 +13,8 @@ const COMMANDS: &[&str] = &[
     "list_remote",
     "upload_file",
     "download_file",
+    "download_and_extract",
+    "upload_compressed",
     "run_job",
     "cancel_run",
     "list_versions",

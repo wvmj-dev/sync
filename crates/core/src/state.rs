@@ -11,6 +11,7 @@ use uuid::Uuid;
 use crate::domain::{EntryKind, IndexEntry, RunKind, RunRecord, RunStatus, RunTrigger};
 use crate::error::{CoreError, CoreResult, IoContext};
 use crate::fsutil::create_private_file;
+use crate::provider::RemoteEntry;
 
 /// Migrações sequenciais; a posição no array é a versão (`PRAGMA user_version`).
 /// Nunca altere uma migração já publicada — acrescente outra.
@@ -81,6 +82,20 @@ const MIGRATIONS: &[&str] = &[
     );
     CREATE INDEX archives_by_destination ON archives (job_id, account_id, dest_path, created_at DESC);
 ",
+    // 3: versões recebidas por tarefas que recebem (RN-107).
+    r"
+    CREATE TABLE received (
+        id          TEXT    PRIMARY KEY,
+        job_id      TEXT    NOT NULL,
+        remote_id   TEXT    NOT NULL,
+        name        TEXT    NOT NULL,
+        size        INTEGER NOT NULL,
+        hash        TEXT,
+        dest        TEXT    NOT NULL,
+        received_at TEXT    NOT NULL
+    );
+    CREATE INDEX received_by_job ON received (job_id, received_at DESC);
+",
 ];
 
 pub struct StateDb {
@@ -103,6 +118,30 @@ pub struct ArchiveRecord {
     /// RN-59: resumo do conteúdo das fontes (caminhos, tamanhos, datas).
     pub fingerprint: String,
     pub created_at: DateTime<Utc>,
+}
+
+/// Uma versão recebida por uma tarefa que recebe (RN-107).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReceivedRecord {
+    pub id: Uuid,
+    pub job_id: Uuid,
+    pub remote_id: String,
+    pub name: String,
+    pub size: u64,
+    pub hash: Option<String>,
+    /// Pasta criada no computador.
+    pub dest: String,
+    pub received_at: DateTime<Utc>,
+}
+
+impl ReceivedRecord {
+    /// RN-107: é a mesma versão (mesmo item, nome e tamanho; e conteúdo, se houver hash)?
+    pub fn is_same(&self, e: &RemoteEntry) -> bool {
+        self.remote_id == e.id
+            && self.name == e.name
+            && e.size.is_none_or(|s| s == self.size)
+            && (self.hash.is_none() || e.hash.is_none() || self.hash == e.hash)
+    }
 }
 
 fn ts(t: DateTime<Utc>) -> String {
@@ -277,7 +316,7 @@ impl StateDb {
     /// Esquece o índice e as versões registradas. Os arquivos no destino ficam como estão.
     pub fn clear_job(&mut self, job_id: Uuid) -> CoreResult<()> {
         let tx = self.conn.transaction()?;
-        for table in ["file_index", "archives"] {
+        for table in ["file_index", "archives", "received"] {
             tx.execute(
                 &format!("DELETE FROM {table} WHERE job_id = ?1"),
                 params![job_id.to_string()],
@@ -389,6 +428,50 @@ impl StateDb {
         ))?;
         let rows = stmt.query_map(params![job_id.to_string()], archive_row)?;
         Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    // ---- Versões recebidas ----
+
+    pub fn insert_received(&self, r: &ReceivedRecord) -> CoreResult<()> {
+        self.conn.execute(
+            "INSERT INTO received (id, job_id, remote_id, name, size, hash, dest, received_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                r.id.to_string(),
+                r.job_id.to_string(),
+                r.remote_id,
+                r.name,
+                i64::try_from(r.size).unwrap_or(i64::MAX),
+                r.hash,
+                r.dest,
+                ts(r.received_at),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// A última versão recebida pela tarefa.
+    pub fn last_received(&self, job_id: Uuid) -> CoreResult<Option<ReceivedRecord>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT id, job_id, remote_id, name, size, hash, dest, received_at FROM received
+             WHERE job_id = ?1 ORDER BY received_at DESC LIMIT 1",
+        )?;
+        let mut rows = stmt.query_map(params![job_id.to_string()], |r| {
+            let id: String = r.get(0)?;
+            let job: String = r.get(1)?;
+            let at: String = r.get(7)?;
+            Ok(ReceivedRecord {
+                id: id.parse().map_err(|_| bad_value("id", &id))?,
+                job_id: job.parse().map_err(|_| bad_value("tarefa", &job))?,
+                remote_id: r.get(2)?,
+                name: r.get(3)?,
+                size: u64::try_from(r.get::<_, i64>(4)?).unwrap_or(0),
+                hash: r.get(5)?,
+                dest: r.get(6)?,
+                received_at: parse_ts(&at)?,
+            })
+        })?;
+        Ok(rows.next().transpose()?)
     }
 
     pub fn delete_archive(&self, id: Uuid) -> CoreResult<()> {
@@ -516,6 +599,44 @@ mod tests {
         assert!(db.list_job_archives(Uuid::new_v4()).unwrap().is_empty());
         db.delete_archive(old.id).unwrap();
         assert_eq!(db.list_archives(job, account, "Backups").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn rn107_ultima_versao_recebida() {
+        let mut db = StateDb::open_in_memory().unwrap();
+        let job = Uuid::new_v4();
+        assert_eq!(db.last_received(job).unwrap(), None);
+        let record = |name: &str, minutes: i64| ReceivedRecord {
+            id: Uuid::new_v4(),
+            job_id: job,
+            remote_id: format!("id-{name}"),
+            name: name.into(),
+            size: 10,
+            hash: Some("h".into()),
+            dest: format!("/r/{name}"),
+            received_at: Utc::now() - chrono::Duration::minutes(minutes),
+        };
+        db.insert_received(&record("velha", 60)).unwrap();
+        db.insert_received(&record("nova", 1)).unwrap();
+        let last = db.last_received(job).unwrap().unwrap();
+        assert_eq!(last.name, "nova");
+
+        let mut entry = RemoteEntry {
+            id: "id-nova".into(),
+            name: "nova".into(),
+            kind: EntryKind::File,
+            size: Some(10),
+            hash: Some("h".into()),
+            modified_at: None,
+            modified_by: None,
+        };
+        assert!(last.is_same(&entry));
+        // Substituída no destino com o mesmo nome: conteúdo diferente, recebe de novo.
+        entry.hash = Some("outro".into());
+        assert!(!last.is_same(&entry));
+
+        db.clear_job(job).unwrap();
+        assert_eq!(db.last_received(job).unwrap(), None);
     }
 
     #[test]

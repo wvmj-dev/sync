@@ -16,15 +16,14 @@ use syncly_core::fsutil::unique_path;
 use syncly_core::hash::hash_file;
 use syncly_core::lock::JobLock;
 use syncly_core::provider::StorageProvider;
-use syncly_core::state::ArchiveRecord;
 use syncly_core::sync::executor::Progress;
 use uuid::Uuid;
 
-use crate::archive::{ExtractResult, MAX_REPORTED};
+use crate::archive::{ExtractResult, ensure_space};
 use crate::delivery::{TMP_PREFIX, TempFile, failed, is_intact, with_progress};
-use crate::dto::{VersionItem, human_bytes};
+use crate::dto::VersionItem;
 use crate::error::{ServiceError, ServiceResult};
-use crate::service::{RunningGuard, Service, elapsed_ms};
+use crate::service::{RunningGuard, Service};
 
 impl Service {
     /// Versões enviadas por uma tarefa, em qualquer destino, da mais nova para a mais antiga.
@@ -120,19 +119,9 @@ impl Service {
                 version.name
             )));
         }
-        let staging = self.staging_dir(job_id)?;
+        let staging = self.staging_dir(&job_id.to_string())?;
         // RN-67: o download cabe no disco sem passar da reserva.
-        if let Ok(available) = fs4::available_space(&staging)
-            && available < version.size.saturating_add(DISK_RESERVE_BYTES)
-        {
-            return Err(CoreError::DiskFull(format!(
-                "o disco do computador tem {} livres; a versão tem {} (reserva de {})",
-                human_bytes(available),
-                human_bytes(version.size),
-                human_bytes(DISK_RESERVE_BYTES)
-            ))
-            .into());
-        }
+        ensure_space(&staging, version.size, "o disco do computador")?;
 
         let run_id = state.start_run(job_id, RunKind::Restore, RunTrigger::Manual)?;
         tracing::info!(job = %job_id, "restauração iniciada");
@@ -141,9 +130,16 @@ impl Service {
             stem: &stem,
             format,
         };
-        let result = download_and_extract(
+        let file = RemoteFile {
+            id: &version.remote_id,
+            name: &version.name,
+            size: version.size,
+            // RN-58: o checksum registrado no envio.
+            expected_hash: version.hash.as_deref(),
+        };
+        let result = fetch_and_extract(
             provider.as_ref(),
-            &version,
+            &file,
             &staging,
             &target,
             &cancel,
@@ -167,30 +163,32 @@ impl Service {
         let stats = serde_json::to_value(&report).ok();
         state.finish_run(run_id, status, stats.as_ref(), None)?;
         tracing::info!(job = %job_id, files = report.files, status = status.as_str(), "restauração concluída");
-        let skipped_count = report.skipped.len();
-        Ok(ExtractResult {
-            dest: report.dest.display().to_string(),
-            files: report.files,
-            folders: report.folders,
-            bytes: report.bytes,
-            skipped: report.skipped.into_iter().take(MAX_REPORTED).collect(),
-            skipped_count,
-            duration_ms: elapsed_ms(started),
-        })
+        Ok(ExtractResult::from_report(report, started))
     }
 }
 
-/// Onde a versão será descompactada.
-struct Target<'a> {
-    dir: &'a Path,
-    stem: &'a str,
-    format: ArchiveFormat,
+/// Onde a versão será descompactada: uma pasta nova `stem` dentro de `dir`.
+pub(crate) struct Target<'a> {
+    pub dir: &'a Path,
+    pub stem: &'a str,
+    pub format: ArchiveFormat,
 }
 
-/// Um erro vem com o status que vai para o histórico (falha ou cancelada).
-async fn download_and_extract(
+/// Arquivo compactado no destino.
+pub(crate) struct RemoteFile<'a> {
+    pub id: &'a str,
+    pub name: &'a str,
+    pub size: u64,
+    /// Se houver, o arquivo baixado precisa ter este checksum.
+    pub expected_hash: Option<&'a str>,
+}
+
+/// Baixa para `staging`, confere e descompacta numa pasta nova (RN-57, RN-58, RN-65 a
+/// RN-67). Usado pela restauração e pelo recebimento. Um erro vem com o status que vai
+/// para o histórico (falha ou cancelada).
+pub(crate) async fn fetch_and_extract(
     provider: &dyn StorageProvider,
-    version: &ArchiveRecord,
+    file: &RemoteFile<'_>,
     staging: &Path,
     target: &Target<'_>,
     cancel: &Arc<AtomicBool>,
@@ -205,26 +203,26 @@ async fn download_and_extract(
         done: 0,
         total: 1,
         bytes_done: 0,
-        bytes_total: version.size,
-        current: Some(format!("baixando {}", version.name)),
+        bytes_total: file.size,
+        current: Some(format!("baixando {}", file.name)),
     });
     provider
-        .download(&version.remote_id, &temp.0)
+        .download(file.id, &temp.0)
         .await
         .map_err(|e| failed(CoreError::from(e)))?;
     if cancel.load(Ordering::Relaxed) {
         return Err((RunStatus::Cancelled, CoreError::Cancelled.into()));
     }
 
-    // RN-58: confere com o checksum registrado no envio — pega também uma versão
-    // substituída no destino por outra de mesmo nome e tamanho.
-    if let Some(expected) = version.hash.clone() {
+    // RN-58: confere o checksum — pega também uma versão substituída no destino por
+    // outra de mesmo nome e tamanho.
+    if let Some(expected) = file.expected_hash {
         progress(&Progress {
             done: 0,
             total: 1,
-            bytes_done: version.size,
-            bytes_total: version.size,
-            current: Some(format!("conferindo {}", version.name)),
+            bytes_done: file.size,
+            bytes_total: file.size,
+            current: Some(format!("conferindo {}", file.name)),
         });
         let path = temp.0.clone();
         let kind = provider.hash_kind();
@@ -238,7 +236,7 @@ async fn download_and_extract(
             return Err(failed(ServiceError::Invalid(format!(
                 "'{}' não confere com o que foi enviado (checksum diferente) — nada foi \
                  descompactado",
-                version.name
+                file.name
             ))));
         }
     }

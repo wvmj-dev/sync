@@ -33,11 +33,16 @@ export function formatLabel(format: ArchiveFormat): string {
   return archiveFormats.find((f) => f.value === format)?.label ?? format;
 }
 
-/** "Envio", "Espelho" ou "Compactado (ZIP)". */
+/** "Envio", "Espelho", "Compactado (ZIP)" ou "Recebe". */
 export function deliveryLabel(sync: SyncSummary): string {
-  return sync.delivery.kind === "archive"
-    ? `Compactado (${formatLabel(sync.delivery.format)})`
-    : modeLabel[sync.mode];
+  switch (sync.delivery.kind) {
+    case "archive":
+      return `Compactado (${formatLabel(sync.delivery.format)})`;
+    case "receive":
+      return "Recebe";
+    default:
+      return modeLabel[sync.mode];
+  }
 }
 
 export const runStatusLabel: Record<RunStatus, string> = {

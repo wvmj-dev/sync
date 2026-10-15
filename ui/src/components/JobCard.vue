@@ -129,11 +129,13 @@ async function execute() {
         break;
       } catch (e) {
         if (e instanceof ApiError && e.code === "needs_confirmation" && !confirm) {
+          const sync = props.job.sync;
+          const where = `"${sync?.accountLabel}: ${sync?.path}"`;
           const what =
-            props.job.sync?.delivery.kind === "archive"
-              ? "Um arquivo compactado será enviado"
-              : "Os arquivos serão enviados";
-          const message = `${e.message}\n\n${what} para "${props.job.sync?.accountLabel}: ${props.job.sync?.path}". Nada é apagado no seu computador.`;
+            sync?.delivery.kind === "receive"
+              ? `A versão mais recente de ${where} será baixada e descompactada numa pasta nova em "${sync.delivery.target}". Nada existente é substituído.`
+              : `${sync?.delivery.kind === "archive" ? "Um arquivo compactado será enviado" : "Os arquivos serão enviados"} para ${where}. Nada é apagado no seu computador.`;
+          const message = `${e.message}\n\n${what}`;
           if (!(await confirmDanger(message, "Executar"))) break;
           confirm = true;
           continue;
@@ -163,7 +165,12 @@ async function cancel() {
           {{ job.name }}
           <span v-if="!job.enabled" class="badge">desativada</span>
         </h2>
-        <p v-if="job.sync" class="muted">
+        <p v-if="job.sync?.delivery.kind === 'receive'" class="muted">
+          Recebe de {{ job.sync.accountLabel ?? "conta removida" }}:
+          <code>{{ job.sync.path }}</code> → <code>{{ job.sync.delivery.target }}</code>
+          · {{ job.sync.schedule }}
+        </p>
+        <p v-else-if="job.sync" class="muted">
           {{ deliveryLabel(job.sync) }} →
           {{ job.sync.accountLabel ?? "conta removida" }}: <code>{{ job.sync.path }}</code>
           · {{ job.sync.schedule }}
@@ -199,7 +206,7 @@ async function cancel() {
       </div>
     </div>
 
-    <ul class="sources">
+    <ul v-if="job.sources.length" class="sources">
       <li v-for="s in job.sources" :key="s"><code>{{ s }}</code></li>
     </ul>
     <p class="muted small">
@@ -236,7 +243,16 @@ async function cancel() {
         <div>
           <strong>{{ runStatusLabel[result.status] }}</strong>
           em {{ (result.durationMs / 1000).toFixed(1) }} s —
-          <template v-if="result.archive?.unchanged">
+          <template v-if="result.receive?.unchanged">
+            <code>{{ result.receive.name }}</code> já tinha sido recebida; nada a fazer.
+          </template>
+          <template v-else-if="result.receive">
+            <code>{{ result.receive.name }}</code> recebida e descompactada em
+            <code>{{ result.receive.dest }}</code> ({{ result.receive.files }} arquivo(s),
+            {{ formatBytes(result.receive.bytes) }})<template v-if="result.receive.skippedCount">;
+              {{ result.receive.skippedCount }} entrada(s) ignorada(s) por segurança</template>.
+          </template>
+          <template v-else-if="result.archive?.unchanged">
             nada mudou desde a última versão; nada foi enviado.
           </template>
           <template v-else-if="result.archive">

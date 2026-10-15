@@ -19,12 +19,12 @@ e TAR. Tudo verificado por checksum.
 | Prévia da sincronização (enviar, atualizar, conflitos, lixeira) | ✅ |
 | **Executar a sincronização**, com progresso, cancelamento e histórico | ✅ |
 | Proteções: arquivos sensíveis, disco desmontado, exclusão em massa, 1ª execução, espaço na conta | ✅ |
-| Enviar, listar e baixar arquivos avulsos | ✅ |
+| Enviar, listar e baixar arquivos avulsos; **enviar pasta compactada** e **baixar e descompactar** | ✅ |
 | **Compactar e descompactar** (zip, tar, tar.gz, tar.zst), protegido contra arquivos maliciosos | ✅ |
 | Logs em arquivo com rotação | ✅ |
 | Tela de status / última modificação de cada arquivo | fase 1c |
 | **Restaurar uma versão**: baixa, confere o checksum e descompacta numa pasta nova | ✅ |
-| Receber: rotina que baixa e descompacta, "baixar e descompactar", "enviar pasta compactada" | fase 2d |
+| **Receber**: tarefa que baixa a versão mais recente e descompacta numa pasta nova | ✅ |
 | Criptografia das versões | fase 2e |
 | Agendamento, notificações, ícone na bandeja | fase 3 |
 | Sincronização bidirecional | fase 4 |
@@ -59,22 +59,26 @@ Para usar o Google Drive, configure antes o seu projeto no Google Cloud:
 |---|---|
 | **Visão geral** | Primeiros passos, tarefas e última execução, onde ficam config, dados e logs. |
 | **Contas** | **Conectar Google Drive** (abre o navegador; clique em *Continuar* no aviso "O Google não verificou este app" — é o seu próprio app) e adicionar **pastas locais** (HD externo, NAS). |
-| **Tarefas** | Criar uma tarefa (fontes + destino + como enviar), **Pré-visualizar** e **Executar**. Na primeira execução o app pede confirmação. Em tarefas compactadas, **Versões → Restaurar…** descompacta uma versão numa pasta nova. |
-| **Arquivos** | Navegar na pasta `Syncly/` de uma conta, **enviar** e **baixar** arquivos avulsos. |
+| **Tarefas** | Criar uma tarefa (o que ela faz + destino), **Pré-visualizar** e **Executar**. Na primeira execução o app pede confirmação. Em tarefas compactadas, **Versões → Restaurar…** descompacta uma versão numa pasta nova. |
+| **Arquivos** | Navegar na pasta `Syncly/` de uma conta, **enviar** e **baixar** arquivos avulsos, **enviar uma pasta compactada** e **baixar e descompactar** um `.zip`/`.tar.*`. |
 | **Compactar** | Compactar pastas/arquivos em ZIP, TAR.GZ, TAR.ZST ou TAR, e descompactar numa pasta nova. |
 
-Como uma tarefa envia:
+O que uma tarefa faz:
 
-- **Arquivo por arquivo**, no modo:
+- **Enviar arquivo por arquivo**, no modo:
   - **Envio** (recomendado) — manda o que é novo ou mudou; nunca apaga nada no destino.
   - **Espelho** — o que você apagar no computador vai para a **lixeira** do destino
     (recuperável por 30 dias no Drive), com proteção contra exclusões em massa.
-- **Compactado** (backup) — a cada execução, tudo vira um único arquivo
+- **Enviar compactado** (backup) — a cada execução, tudo vira um único arquivo
   `Tarefa_AAAA-MM-DD_HH-MM-SS.zip` (ou `.tar.gz`, `.tar.zst`, `.tar`). Guarda as últimas 3
   versões + 1 por dia (7 dias), por semana (4) e por mês (6) — configurável; as mais antigas
   vão para a lixeira. Se nada mudou, nada é enviado. Ideal para pastas com muitos arquivos
   pequenos (ex.: saves de jogos). Com uma conta do tipo pasta local, é um backup
   local (HD externo).
+- **Receber e descompactar** — baixa a versão mais recente de uma pasta do destino e a
+  descompacta numa **pasta nova** no computador; se ela já foi recebida, não faz nada. Serve
+  para levar um backup de um computador a outro, ou manter uma cópia descompactada à mão.
+  Só enxerga o que o Syncly enviou.
 
 Dicas:
 
@@ -104,6 +108,8 @@ cargo run -p syncly-cli -- google connect             # abre o navegador para au
 cargo run -p syncly-cli -- remote put ~/foto.jpg Testes          # envia para Syncly/Testes/
 cargo run -p syncly-cli -- remote ls Testes
 cargo run -p syncly-cli -- remote get Testes/foto.jpg ~/Downloads
+cargo run -p syncly-cli -- remote put ~/Fotos Testes --compress --format tar.zst   # pasta → um arquivo
+cargo run -p syncly-cli -- remote get Testes/Fotos.tar.zst ~/Downloads --extract  # numa pasta nova
 
 cargo run -p syncly-cli -- archive create ~/Fotos --format zip --out ~/Downloads
 cargo run -p syncly-cli -- archive create ~/projeto ~/notas.md --format tar.gz --name backup

@@ -1,12 +1,57 @@
-//! Versões de tarefas compactadas (RN-50, RN-59): nome com data e "impressão digital"
-//! do conteúdo das fontes.
+//! Versões de tarefas compactadas (RN-50, RN-59, RN-107): nome com data, "impressão
+//! digital" do conteúdo das fontes e escolha da versão mais recente ao receber.
 
 use chrono::NaiveDateTime;
 
 use crate::domain::rel_path::validate_name;
 use crate::domain::{ArchiveFormat, EntryKind};
 use crate::hash::{ContentHasher, HashKind};
+use crate::provider::RemoteEntry;
 use crate::sync::scanner::ScanResult;
+
+/// Data e sequência lidas do nome de uma versão (`… (2).zip` → 2; sem sufixo → 1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct VersionStamp {
+    pub at: NaiveDateTime,
+    pub seq: u32,
+}
+
+/// RN-107: reconhece `<tarefa>_AAAA-MM-DD_HH-MM-SS[ (n)].<ext>` (RN-50). Qualquer outro
+/// nome não é uma versão — fica de fora do recebimento.
+pub fn parse_version_name(name: &str) -> Option<(VersionStamp, ArchiveFormat)> {
+    let (format, stem) = ArchiveFormat::detect(name)?;
+    let (stem, seq) = match stem.strip_suffix(')').and_then(|s| s.rsplit_once(" (")) {
+        Some((base, n)) => (base, n.parse::<u32>().ok().filter(|n| *n >= 2)?),
+        None => (stem, 1),
+    };
+    // "_" + "AAAA-MM-DD_HH-MM-SS" (19 caracteres ASCII), com algo antes.
+    let split = stem.len().checked_sub(20).filter(|i| *i > 0)?;
+    let (base, stamp) = stem.split_at_checked(split)?;
+    let stamp = stamp.strip_prefix('_')?;
+    if base.is_empty() {
+        return None;
+    }
+    let at = NaiveDateTime::parse_from_str(stamp, "%Y-%m-%d_%H-%M-%S").ok()?;
+    Some((VersionStamp { at, seq }, format))
+}
+
+/// RN-107: a versão mais recente entre os arquivos de uma pasta, pela data no nome.
+/// Nomes repetidos são devolvidos à parte: o app nunca escolhe entre eles (RN-34).
+pub fn latest_version(entries: &[RemoteEntry]) -> Result<Option<&RemoteEntry>, String> {
+    let best = entries
+        .iter()
+        .filter(|e| e.kind == EntryKind::File)
+        .filter_map(|e| parse_version_name(&e.name).map(|(stamp, _)| (stamp, e)))
+        .max_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.name.cmp(&b.1.name)))
+        .map(|(_, e)| e);
+    match best {
+        Some(e) if entries.iter().filter(|o| o.name == e.name).count() > 1 => Err(format!(
+            "há mais de um item '{}' no destino — renomeie no provedor",
+            e.name
+        )),
+        other => Ok(other),
+    }
+}
 
 /// RN-50: `<tarefa>_AAAA-MM-DD_HH-MM-SS.<ext>`, na hora local. Caracteres que não podem
 /// ir num nome de arquivo viram `_`. Se o nome já estiver em uso no destino (`taken`),
@@ -125,6 +170,63 @@ mod tests {
             },
         );
         scan
+    }
+
+    fn file(name: &str) -> RemoteEntry {
+        RemoteEntry {
+            id: format!("id-{name}"),
+            name: name.into(),
+            kind: EntryKind::File,
+            size: Some(1),
+            hash: Some("h".into()),
+            modified_at: None,
+            modified_by: None,
+        }
+    }
+
+    #[test]
+    fn rn107_reconhece_nomes_de_versao() {
+        let (stamp, format) = parse_version_name("Mundo_2026-10-14_02-00-05.tar.zst").unwrap();
+        assert_eq!(
+            (stamp.at, stamp.seq, format),
+            (at(), 1, ArchiveFormat::TarZst)
+        );
+        let (stamp, _) = parse_version_name("Meu mundo_2026-10-14_02-00-05 (3).zip").unwrap();
+        assert_eq!(stamp.seq, 3);
+        // O que o próprio app gera é sempre reconhecido.
+        let name = version_name("Mundo", at(), ArchiveFormat::TarGz, |_| false);
+        assert!(parse_version_name(&name).is_some());
+        for other in [
+            "Mundo.zip",
+            "_2026-10-14_02-00-05.zip",
+            "Mundo_2026-13-14_02-00-05.zip",
+            "Mundo_2026-10-14_02-00-05.rar",
+            "Mundo_2026-10-14_02-00-05 (x).zip",
+            "Mundo_2026-10-14_02-00-05 (1).zip",
+            "notas.txt",
+        ] {
+            assert!(parse_version_name(other).is_none(), "{other}");
+        }
+    }
+
+    #[test]
+    fn rn107_escolhe_a_versao_mais_recente() {
+        let entries = [
+            file("Mundo_2026-10-13_23-59-59.zip"),
+            file("Mundo_2026-10-14_02-00-05.zip"),
+            file("Mundo_2026-10-14_02-00-05 (2).zip"),
+            file("Mundo_2027-01-01_00-00-00.txt"),
+            file("leia-me.zip"),
+        ];
+        let latest = latest_version(&entries).unwrap().unwrap();
+        assert_eq!(latest.name, "Mundo_2026-10-14_02-00-05 (2).zip");
+        assert_eq!(latest_version(&entries[3..]).unwrap(), None);
+        // RN-34: nome repetido — o app não escolhe.
+        let dup = [
+            file("Mundo_2026-10-14_02-00-05.zip"),
+            file("Mundo_2026-10-14_02-00-05.zip"),
+        ];
+        assert!(latest_version(&dup).is_err());
     }
 
     #[test]

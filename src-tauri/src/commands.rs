@@ -8,7 +8,8 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 use syncly_service::dto::{
-    AccountSummary, AppInfo, JobDraft, JobSummary, PlanPreview, RemoteItem, RunReport, VersionItem,
+    AccountSummary, AppInfo, JobDraft, JobSummary, PlanPreview, RemoteItem, RunReport,
+    UploadCompressedRequest, VersionItem,
 };
 use syncly_service::{
     CompressRequest, CompressResult, ExtractResult, Progress, RunOptions, RunTrigger, Service,
@@ -230,4 +231,36 @@ pub async fn download_file(
         .download_file(account_id, &remote_path, &local_dir)
         .await?;
     Ok(saved.display().to_string())
+}
+
+/// Baixa um `.zip`/`.tar.*` e descompacta numa pasta nova (RN-108).
+/// Progresso pelo evento `archive-progress`; cancela com `cancel_archive`.
+#[tauri::command]
+pub async fn download_and_extract(
+    app: AppHandle,
+    service: State<'_, Service>,
+    account_id: Uuid,
+    remote_path: String,
+    local_dir: PathBuf,
+) -> ApiResult<ExtractResult> {
+    Ok(service
+        .download_and_extract(account_id, &remote_path, local_dir, move |p| {
+            let _ = app.emit("archive-progress", p.clone());
+        })
+        .await?)
+}
+
+/// Compacta e envia como um único arquivo (RN-109).
+/// Progresso pelo evento `archive-progress`; cancela com `cancel_archive`.
+#[tauri::command]
+pub async fn upload_compressed(
+    app: AppHandle,
+    service: State<'_, Service>,
+    request: UploadCompressedRequest,
+) -> ApiResult<RemoteItem> {
+    Ok(service
+        .upload_compressed(request, move |p| {
+            let _ = app.emit("archive-progress", p.clone());
+        })
+        .await?)
 }

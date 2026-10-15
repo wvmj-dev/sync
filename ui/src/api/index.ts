@@ -16,6 +16,7 @@ import type {
   RemoteItem,
   RunProgress,
   RunReport,
+  UploadCompressedRequest,
   VersionItem,
 } from "./types";
 
@@ -78,6 +79,12 @@ export const api = {
   /** Retorna o caminho onde o arquivo foi salvo. */
   downloadFile: (accountId: string, remotePath: string, localDir: string) =>
     call<string>("download_file", { accountId, remotePath, localDir }),
+  /** RN-108. Progresso por `archive-progress`; cancela com `cancelArchive()`. */
+  downloadAndExtract: (accountId: string, remotePath: string, localDir: string) =>
+    call<ExtractResult>("download_and_extract", { accountId, remotePath, localDir }),
+  /** RN-109. Progresso por `archive-progress`; cancela com `cancelArchive()`. */
+  uploadCompressed: (request: UploadCompressedRequest) =>
+    call<RemoteItem>("upload_compressed", { request }),
 };
 
 export async function pickFolder(title: string): Promise<string | null> {

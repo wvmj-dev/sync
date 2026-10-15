@@ -41,6 +41,22 @@ pub struct ArchiveGuardInput<'a> {
     pub first_run: bool,
 }
 
+/// Entrada da guarda de uma tarefa que recebe (RN-107). Ela só cria pastas novas no
+/// computador, então não há o que confirmar além da primeira vez.
+pub struct ReceiveGuardInput<'a> {
+    /// Pasta do computador onde as versões são descompactadas.
+    pub target: &'a std::path::Path,
+    pub target_exists: bool,
+    /// A pasta no destino existe e tem ao menos uma versão.
+    pub latest_found: bool,
+    /// Pasta de origem no destino, para a mensagem.
+    pub origin: &'a str,
+    /// RN-107: a versão mais recente já foi recebida — nada a fazer.
+    pub already_received: bool,
+    /// RN-36: nenhuma execução bem-sucedida até agora.
+    pub first_run: bool,
+}
+
 pub fn evaluate(input: &GuardInput<'_>) -> GuardVerdict {
     let mut abort = unavailable_sources(input.sources);
     for s in input.sources {
@@ -107,6 +123,33 @@ pub fn evaluate_archive(input: &ArchiveGuardInput<'_>) -> GuardVerdict {
     if input.first_run && !input.unchanged {
         return GuardVerdict::NeedsConfirmation(vec![
             "primeira execução desta tarefa — revise o que será enviado".into(),
+        ]);
+    }
+    GuardVerdict::Proceed
+}
+
+/// Guarda de uma tarefa que recebe (RN-36, RN-40, RN-43, RN-107).
+pub fn evaluate_receive(input: &ReceiveGuardInput<'_>) -> GuardVerdict {
+    let mut abort = Vec::new();
+    if !input.target_exists {
+        // RN-40: com o HD desmontado, gravaria no disco do sistema.
+        abort.push(format!(
+            "a pasta '{}' não foi encontrada — disco desmontado?",
+            input.target.display()
+        ));
+    }
+    if !input.latest_found {
+        abort.push(format!(
+            "nenhuma versão encontrada em '{}' no destino",
+            input.origin
+        ));
+    }
+    if !abort.is_empty() {
+        return GuardVerdict::Abort(abort);
+    }
+    if input.first_run && !input.already_received {
+        return GuardVerdict::NeedsConfirmation(vec![
+            "primeira execução desta tarefa — revise o que será recebido".into(),
         ]);
     }
     GuardVerdict::Proceed
@@ -289,6 +332,28 @@ mod tests {
             archive(&[source("Docs", true, 3)], true, false),
             GuardVerdict::Proceed
         );
+    }
+
+    fn receive(target_exists: bool, latest_found: bool, first_run: bool) -> GuardVerdict {
+        evaluate_receive(&ReceiveGuardInput {
+            target: std::path::Path::new("/mnt/hd/Recebidos"),
+            target_exists,
+            latest_found,
+            origin: "Backups",
+            already_received: false,
+            first_run,
+        })
+    }
+
+    #[test]
+    fn rn107_recebimento_bloqueia_sem_pasta_ou_sem_versao() {
+        assert!(matches!(receive(false, true, false), GuardVerdict::Abort(r) if r.len() == 1));
+        assert!(matches!(receive(true, false, false), GuardVerdict::Abort(r) if r.len() == 1));
+        assert!(matches!(
+            receive(true, true, true),
+            GuardVerdict::NeedsConfirmation(_)
+        ));
+        assert_eq!(receive(true, true, false), GuardVerdict::Proceed);
     }
 
     #[test]

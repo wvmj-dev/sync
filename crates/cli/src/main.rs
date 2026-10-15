@@ -8,7 +8,10 @@ use clap::{Parser, Subcommand, ValueEnum};
 use syncly_core::domain::{Delivery, SyncMode};
 use syncly_core::sync::executor::ExecutionReport;
 use syncly_core::sync::guard::GuardVerdict;
-use syncly_service::dto::{ArchivePreview, PlanPreview, RemoteItem, RunReport, human_bytes};
+use syncly_service::dto::{
+    ArchivePreview, PlanPreview, ReceivePreview, RemoteItem, RunReport, UploadCompressedRequest,
+    human_bytes,
+};
 use syncly_service::{
     AppPaths, ArchiveFormat, ArchiveProgress, CompressRequest, ExtractResult, Progress, RunOptions,
     RunTrigger, Service, ServiceError, logging,
@@ -147,10 +150,17 @@ enum RemoteCommand {
     },
     /// Envia um arquivo. Nunca sobrescreve um existente.
     Put {
+        /// Arquivo; com --compress, também pasta.
         #[arg(value_name = "ARQUIVO")]
         file: PathBuf,
         #[arg(default_value = "", value_name = "PASTA")]
         dir: String,
+        /// RN-109: compacta e envia um único arquivo (`<nome>.zip`…).
+        #[arg(long)]
+        compress: bool,
+        /// Formato com --compress.
+        #[arg(long, value_enum, default_value = "zip", requires = "compress")]
+        format: FormatArg,
     },
     /// Baixa um arquivo. Nunca sobrescreve: usa "nome (2)" se preciso.
     Get {
@@ -158,6 +168,9 @@ enum RemoteCommand {
         path: String,
         #[arg(default_value = ".", value_name = "DESTINO")]
         dest: PathBuf,
+        /// RN-108: descompacta (.zip, .tar.*) numa pasta nova em vez de salvar o arquivo.
+        #[arg(long)]
+        extract: bool,
     },
 }
 
@@ -209,12 +222,15 @@ async fn run(cli: Cli) -> Result<ExitCode, syncly_service::ServiceError> {
                 let dest = j.sync.as_ref().map_or_else(
                     || "-".to_string(),
                     |s| {
-                        format!(
-                            "{} → {}:{}",
-                            delivery_label(s.delivery, s.mode),
-                            s.account_label.as_deref().unwrap_or("?"),
-                            s.path
-                        )
+                        let account = s.account_label.as_deref().unwrap_or("?");
+                        match &s.delivery {
+                            Delivery::Receive { target } => {
+                                format!("recebe {account}:{} → {}", s.path, target.display())
+                            }
+                            other => {
+                                format!("{} → {account}:{}", delivery_label(other, s.mode), s.path)
+                            }
+                        }
                     },
                 );
                 println!("{}  {:<20} {:<10} {}", j.id, j.name, status, dest);
@@ -402,13 +418,43 @@ async fn run(cli: Cli) -> Result<ExitCode, syncly_service::ServiceError> {
                     }
                     items.iter().for_each(print_item);
                 }
-                RemoteCommand::Put { file, dir } => {
+                RemoteCommand::Put {
+                    file,
+                    dir,
+                    compress: false,
+                    ..
+                } => {
                     let item = service.upload_file(id, &absolute(&file)?, &dir).await?;
                     println!("Enviado e verificado: Syncly/{}", item.path);
                 }
-                RemoteCommand::Get { path, dest } => {
+                RemoteCommand::Put {
+                    file, dir, format, ..
+                } => {
+                    let request = UploadCompressedRequest {
+                        account_id: id,
+                        inputs: vec![absolute(&file)?],
+                        remote_dir: dir,
+                        format: format.into(),
+                        name: None,
+                    };
+                    let result = service.upload_compressed(request, show_archive).await;
+                    end_progress();
+                    println!("Compactado, enviado e verificado: Syncly/{}", result?.path);
+                }
+                RemoteCommand::Get {
+                    path,
+                    dest,
+                    extract: false,
+                } => {
                     let saved = service.download_file(id, &path, &absolute(&dest)?).await?;
                     println!("Baixado e verificado: {}", saved.display());
+                }
+                RemoteCommand::Get { path, dest, .. } => {
+                    let result = service
+                        .download_and_extract(id, &path, absolute(&dest)?, show_archive)
+                        .await;
+                    end_progress();
+                    print_extracted("Baixado e descompactado em", &result?);
                 }
             }
         }
@@ -434,6 +480,19 @@ fn print_progress(p: &Progress) {
         human_bytes(p.bytes_total)
     );
     let _ = std::io::stderr().flush();
+}
+
+/// Progresso de compactação no terminal (nada se a saída não for um terminal).
+fn show_archive(p: &ArchiveProgress) {
+    if std::io::stderr().is_terminal() {
+        print_archive_progress(p);
+    }
+}
+
+fn end_progress() {
+    if std::io::stderr().is_terminal() {
+        eprintln!();
+    }
 }
 
 fn print_archive_progress(p: &ArchiveProgress) {
@@ -469,7 +528,25 @@ fn print_report(r: &RunReport) {
     };
     let e = &r.report;
     println!("{label} em {:.1} s", r.duration_ms as f64 / 1000.0);
-    if let Some(a) = &r.archive {
+    if let Some(rx) = &r.receive {
+        if rx.unchanged {
+            println!("  {} já tinha sido recebida — nada a fazer", rx.name);
+        } else {
+            println!(
+                "  recebida: {}\n  descompactada em: {}  ({} arquivo(s), {})",
+                rx.name,
+                rx.dest,
+                rx.files,
+                human_bytes(rx.bytes)
+            );
+        }
+        if rx.skipped_count > 0 {
+            println!(
+                "  {} entrada(s) ignorada(s) por segurança",
+                rx.skipped_count
+            );
+        }
+    } else if let Some(a) = &r.archive {
         match &a.name {
             Some(name) => println!(
                 "  versão enviada: {name}  ({} arquivo(s), {} → {})",
@@ -563,18 +640,20 @@ fn print_item(item: &RemoteItem) {
     println!("  {:<40} {:>10}  {when}  {who}{note}", item.name, size);
 }
 
-fn delivery_label(delivery: Delivery, mode: SyncMode) -> String {
+fn delivery_label(delivery: &Delivery, mode: SyncMode) -> String {
     match (delivery, mode) {
         (Delivery::Archive { format, .. }, _) => format!("compactado .{}", format.extension()),
+        (Delivery::Receive { .. }, _) => "recebe".into(),
         (Delivery::Files, SyncMode::Upload) => "envio".into(),
         (Delivery::Files, SyncMode::Mirror) => "espelho".into(),
     }
 }
 
 fn print_preview(p: &PlanPreview, limit: usize) {
-    match &p.archive {
-        Some(a) => print_archive_preview(a),
-        None => print_plan(p, limit),
+    match (&p.archive, &p.receive) {
+        (Some(a), _) => print_archive_preview(a),
+        (_, Some(r)) => print_receive_preview(r),
+        _ => print_plan(p, limit),
     }
     for w in &p.warnings {
         println!("aviso: {w}");
@@ -590,6 +669,23 @@ fn print_preview(p: &PlanPreview, limit: usize) {
             r.iter().for_each(|x| println!("  - {x}"));
         }
     }
+}
+
+fn print_receive_preview(r: &ReceivePreview) {
+    let Some(name) = &r.name else {
+        println!("Nenhuma versão no destino ainda.");
+        return;
+    };
+    if r.already_received {
+        println!("A versão mais recente ({name}) já foi recebida — nada a fazer.");
+        return;
+    }
+    println!("Recebimento:");
+    println!(
+        "  versão mais recente: {name}  ({})",
+        r.size.map(human_bytes).unwrap_or_default()
+    );
+    println!("  descompactar em:     {}/ (pasta nova)", r.target);
 }
 
 fn print_archive_preview(a: &ArchivePreview) {

@@ -74,6 +74,34 @@ impl LocalProvider {
             .fold(self.root.clone(), |acc, part| acc.join(part)))
     }
 
+    /// Itens de uma pasta; sem `with_hash`, não lê o conteúdo dos arquivos.
+    async fn list(&self, folder_id: &str, with_hash: bool) -> ProviderResult<Vec<RemoteEntry>> {
+        self.check_root()?;
+        let dir = self.resolve(folder_id)?;
+        let folder_id = folder_id.trim_matches('/').to_string();
+        blocking(move || {
+            let mut out = Vec::new();
+            for item in fs::read_dir(&dir)? {
+                let item = item?;
+                let Some(name) = item.file_name().to_str().map(str::to_owned) else {
+                    continue;
+                };
+                let file_type = item.file_type()?;
+                if name.starts_with(RESERVED_PREFIX) || !(file_type.is_dir() || file_type.is_file())
+                {
+                    continue;
+                }
+                out.push(Self::entry(
+                    join_str(&folder_id, &name),
+                    &item.path(),
+                    with_hash,
+                )?);
+            }
+            Ok(out)
+        })
+        .await
+    }
+
     fn entry(id: String, path: &Path, with_hash: bool) -> ProviderResult<RemoteEntry> {
         let meta = fs::symlink_metadata(path)?;
         let name = path
@@ -153,30 +181,11 @@ impl StorageProvider for LocalProvider {
     }
 
     async fn list_children(&self, folder_id: &str) -> ProviderResult<Vec<RemoteEntry>> {
-        self.check_root()?;
-        let dir = self.resolve(folder_id)?;
-        let folder_id = folder_id.trim_matches('/').to_string();
-        blocking(move || {
-            let mut out = Vec::new();
-            for item in fs::read_dir(&dir)? {
-                let item = item?;
-                let Some(name) = item.file_name().to_str().map(str::to_owned) else {
-                    continue;
-                };
-                let file_type = item.file_type()?;
-                if name.starts_with(RESERVED_PREFIX) || !(file_type.is_dir() || file_type.is_file())
-                {
-                    continue;
-                }
-                out.push(Self::entry(
-                    join_str(&folder_id, &name),
-                    &item.path(),
-                    true,
-                )?);
-            }
-            Ok(out)
-        })
-        .await
+        self.list(folder_id, true).await
+    }
+
+    async fn list_children_meta(&self, folder_id: &str) -> ProviderResult<Vec<RemoteEntry>> {
+        self.list(folder_id, false).await
     }
 
     async fn child_names(&self, folder_id: &str) -> ProviderResult<Vec<String>> {

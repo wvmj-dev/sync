@@ -44,7 +44,7 @@ chaves de criptografia; integridade dos backups.
 ### Integridade e proteção dos dados
 
 - **SEG-10** — A interface `StorageProvider` não possui exclusão definitiva; só `trash` (RN-44).
-- **SEG-11** — O app só opera dentro da sua pasta raiz e só altera itens presentes no seu índice (RN-03, RN-31) ou versões compactadas que ele mesmo registrou (RN-55).
+- **SEG-11** — O app só opera dentro da sua pasta raiz e só altera itens presentes no seu índice (RN-03, RN-31) ou versões compactadas que ele mesmo registrou (RN-55). Tarefas que recebem só leem do destino e só criam pastas novas no computador (RN-107).
 - **SEG-12** — Guardas contra exclusão em massa e contra fonte vazia/desmontada (RN-40 a RN-43).
 - **SEG-13** — Verificação de checksum em todo upload, download e versão compactada (RN-37, RN-52, RN-58).
 - **SEG-14** — Escrita atômica: arquivo temporário + `fsync` + `rename`, em config, downloads e compactações. Temporários do app (`.syncly-tmp-*`) são os únicos arquivos apagados de vez.

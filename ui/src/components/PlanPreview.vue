@@ -46,7 +46,30 @@ const stats = computed(() => {
       </div>
     </div>
 
-    <template v-if="preview.archive">
+    <template v-if="preview.receive">
+      <p v-if="!preview.receive.name" class="muted">Nenhuma versão no destino ainda.</p>
+      <p v-else-if="preview.receive.alreadyReceived" class="muted">
+        A versão mais recente (<code>{{ preview.receive.name }}</code>) já foi recebida — nada a
+        fazer.
+      </p>
+      <dl v-else class="stats">
+        <div>
+          <dt>Versão mais recente</dt>
+          <dd><code>{{ preview.receive.name }}</code></dd>
+        </div>
+        <div v-if="preview.receive.size != null">
+          <dt>Tamanho</dt>
+          <dd>{{ formatBytes(preview.receive.size) }}</dd>
+        </div>
+        <div>
+          <dt>Descompactar em</dt>
+          <dd><code>{{ preview.receive.target }}</code> (pasta nova)</dd>
+        </div>
+      </dl>
+      <p class="muted small">Calculado em {{ preview.durationMs }} ms · recebimento</p>
+    </template>
+
+    <template v-else-if="preview.archive">
       <p v-if="preview.archive.unchanged" class="muted">
         Nada mudou desde a última versão — nada será enviado
         ({{ preview.archive.versions }} versão(ões) no destino).

@@ -33,6 +33,7 @@ use crate::dto::{
 };
 use crate::error::{ServiceError, ServiceResult};
 use crate::google::GoogleBackend;
+use crate::receive::ReceiveExec;
 use crate::secrets::{KeyringStore, SecretStore};
 
 /// Ponto de entrada dos casos de uso. A configuração é relida do disco a cada
@@ -285,7 +286,7 @@ impl Service {
             Some(s) => Some((
                 s.account_id,
                 RelPath::parse(&s.path).map_err(ServiceError::Invalid)?,
-                s.delivery,
+                s.delivery.clone(),
                 s.mode,
             )),
             None => None,
@@ -445,10 +446,16 @@ impl Service {
     pub async fn preview_job(&self, id: Uuid) -> ServiceResult<PlanPreview> {
         let started = Instant::now();
         let loaded = self.load_job(id)?;
-        if let Delivery::Archive { format, retention } = loaded.sync.delivery {
-            return self
-                .preview_archive(loaded, format, retention, started)
-                .await;
+        match loaded.sync.delivery.clone() {
+            Delivery::Archive { format, retention } => {
+                return self
+                    .preview_archive(loaded, format, retention, started)
+                    .await;
+            }
+            Delivery::Receive { target } => {
+                return self.preview_receive(loaded, target, started).await;
+            }
+            Delivery::Files => {}
         }
         let p = self.prepare(loaded).await?;
         let warnings = p
@@ -488,6 +495,7 @@ impl Service {
             duration_ms: elapsed_ms(started),
             first_run: p.first_run,
             archive: None,
+            receive: None,
         })
     }
 
@@ -510,16 +518,28 @@ impl Service {
         if !loaded.job.enabled {
             return Err(ServiceError::Invalid("a tarefa está desativada".into()));
         }
-        if let Delivery::Archive { format, retention } = loaded.sync.delivery {
-            let exec = ArchiveExec {
-                format,
-                retention,
-                options,
-                cancel: &cancel,
-                progress: &progress,
-                started,
-            };
-            return self.run_archive(loaded, exec).await;
+        match loaded.sync.delivery.clone() {
+            Delivery::Archive { format, retention } => {
+                let exec = ArchiveExec {
+                    format,
+                    retention,
+                    options,
+                    cancel: &cancel,
+                    progress: &progress,
+                    started,
+                };
+                return self.run_archive(loaded, exec).await;
+            }
+            Delivery::Receive { target } => {
+                let exec = ReceiveExec {
+                    options,
+                    cancel: &cancel,
+                    progress: &progress,
+                    started,
+                };
+                return self.run_receive(loaded, target, exec).await;
+            }
+            Delivery::Files => {}
         }
         let p = self.prepare(loaded).await?;
         let state = self.state()?;
@@ -728,7 +748,7 @@ fn job_summary(config: &AppConfig, state: &StateDb, job: &Job) -> ServiceResult<
                 .account(s.destination.account_id)
                 .map(|a| a.label.clone()),
             path: s.destination.path.to_string(),
-            delivery: s.delivery,
+            delivery: s.delivery.clone(),
             mode: s.mode,
             schedule: s.schedule.label(),
         }),
