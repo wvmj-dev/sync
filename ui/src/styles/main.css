@@ -313,6 +313,8 @@ code {
 
 .stack {
   display: grid;
+  /* minmax(0, …): uma tabela larga rola dentro do bloco em vez de alargar a página. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
 }
 
