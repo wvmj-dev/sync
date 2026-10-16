@@ -69,6 +69,9 @@ Depois crie `$HOME/.config/syncly/config.toml` com uma `[[account]]` local apont
 2. Atualize a seção **Estado atual** do `AGENTS.md` e o status no `README.md`.
 3. Rode o papel `.agents/papeis/guardiao-regras.md` para conferir regras ↔ testes.
 4. Rode o papel `.agents/papeis/revisor-seguranca.md` sobre tudo o que mudou na fase.
+5. A fase passou a gravar algo fora do repositório (pasta, arquivo, item no keyring, unit
+   do systemd, pasta no destino)? Atualize **Onde ficam os dados** e **Instalar, atualizar e
+   remover** no `README.md` — quem desinstala precisa saber o que sobra e como apagar.
 
 ## 7. Nova dependência
 

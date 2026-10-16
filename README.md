@@ -136,8 +136,65 @@ Com mais de uma conta, escolha com `--account <nome ou e-mail>`. Para instalar o
 | Estado (índice, histórico) | `~/.local/share/syncly/state.db` |
 | Logs (14 dias; `SYNCLY_LOG=debug` para mais detalhes) | `~/.local/state/syncly/logs/` |
 | Tokens e chaves | keyring do sistema (GNOME Keyring/KWallet) |
+| Agendamentos | `~/.config/systemd/user/syncly-<id>.timer` e `.service` |
+| Arquivos enviados | pasta `Syncly/` na conta (Drive ou pasta local) |
 
 Nada disso fica no repositório — credenciais e dados pessoais nunca vão para o git.
+
+## Instalar, atualizar e remover
+
+O pacote se chama `syncly` e instala o app desktop (`/usr/bin/syncly-desktop`), o atalho do
+menu e os ícones. Para gerá-lo, veja [Desenvolvimento](#desenvolvimento).
+
+```bash
+# Instalar
+sudo dnf install ./target/release/bundle/rpm/Syncly-0.1.0-1.x86_64.rpm
+
+# Atualizar: versão maior → install; mesma versão (nova compilação) → reinstall
+sudo dnf install ./target/release/bundle/rpm/Syncly-<versão>-1.x86_64.rpm
+sudo dnf reinstall ./target/release/bundle/rpm/Syncly-0.1.0-1.x86_64.rpm
+
+# Remover o programa
+sudo dnf remove syncly
+```
+
+Depois de instalar ou atualizar, **abra o app uma vez**: ele re-aponta os agendamentos para o
+programa instalado.
+
+### Remover
+
+`sudo dnf remove syncly` tira **só o programa**. Configuração, estado, logs, o login no
+keyring, os agendamentos e os arquivos no Drive continuam (veja
+[Onde ficam os dados](#onde-ficam-os-dados)) — reinstalar volta de onde parou.
+
+Para **remover tudo**, nesta ordem:
+
+1. **Antes de desinstalar**, no app:
+   - **Tarefas**: mude o agendamento para *manual* ou exclua as tarefas — o app tira os
+     timers do systemd. Senão, eles continuam disparando e falhando sem o programa.
+   - **Contas → Remover** a conta Google — revoga o acesso e apaga o login do keyring.
+2. Remova o programa: `sudo dnf remove syncly`.
+3. Apague os dados locais (**não tem volta**; o `google-client.json` precisaria ser baixado de
+   novo do Google Cloud):
+
+   ```bash
+   rm -rf ~/.config/syncly ~/.local/share/syncly ~/.local/state/syncly
+   ```
+
+4. Se quiser, apague a pasta `Syncly/` pelo site do Drive.
+
+Já desinstalou sem fazer o passo 1? Revogue o acesso em
+[myaccount.google.com/connections](https://myaccount.google.com/connections) e, no terminal:
+
+```bash
+# Login guardado no keyring (só os itens do Syncly: atributo service=syncly)
+secret-tool clear service syncly
+
+# Agendamentos que sobraram
+systemctl --user disable --now 'syncly-*.timer'
+rm ~/.config/systemd/user/syncly-*.timer ~/.config/systemd/user/syncly-*.service
+systemctl --user daemon-reload
+```
 
 ## Desenvolvimento
 
@@ -151,7 +208,8 @@ pnpm build
 Os testes nunca usam a conta Google real, o keyring real nem o seu `HOME`: o Drive é
 simulado (`wiremock`) e o cofre roda em memória.
 
-Pacotes de distribuição (`.rpm`, `.deb`, AppImage em `target/release/bundle/`):
+Pacotes de distribuição (`.rpm`, `.deb`, AppImage em `target/release/bundle/`) — para
+instalar, atualizar ou remover, veja [Instalar, atualizar e remover](#instalar-atualizar-e-remover):
 
 ```bash
 pnpm tauri build
