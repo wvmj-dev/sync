@@ -220,7 +220,8 @@ Planejado: criptografia `age` com manifesto (fase 2e).
 - Cada tarefa agendada vira um par `syncly-<uuid>.service/.timer` (um por tarefa, RN-81) em
   `~/.config/systemd/user/`. O `.service` executa `<executável> run <uuid> --scheduled` —
   `syncly` (CLI) ou `syncly-desktop`, que tem um modo sem janela para isso
-  (`src-tauri/src/headless.rs`); o RPM só instala o segundo.
+  (`src-tauri/src/headless.rs`). O RPM (e o `.deb`) instala os dois: `beforeBundleCommand`
+  compila a CLI em release e `bundle.linux.rpm.files` a coloca em `/usr/bin/syncly`.
 - **Reconciliação** (`Service::reconcile_schedules`): o core gera as units e compara com as
   instaladas (`timers::render_units`/`plan_timers`, funções puras); o serviço grava, remove e
   chama `systemctl --user daemon-reload/enable/restart/disable`. Idempotente — sem mudança,

@@ -149,8 +149,9 @@ Nada disso fica no repositório — credenciais e dados pessoais nunca vão para
 
 ## Instalar, atualizar e remover
 
-O pacote se chama `syncly` e instala o app desktop (`/usr/bin/syncly-desktop`), o atalho do
-menu e os ícones. Para gerá-lo, veja [Desenvolvimento](#desenvolvimento).
+O pacote se chama `syncly` e instala o app desktop (`/usr/bin/syncly-desktop`), a linha de
+comando (`/usr/bin/syncly` — `syncly --help`), o atalho do menu e os ícones. Para gerá-lo,
+veja [Desenvolvimento](#desenvolvimento).
 
 ```bash
 # Instalar
@@ -223,8 +224,11 @@ Pacotes de distribuição (`.rpm`, `.deb`, AppImage em `target/release/bundle/`)
 instalar, atualizar ou remover, veja [Instalar, atualizar e remover](#instalar-atualizar-e-remover):
 
 ```bash
-pnpm tauri build
+pnpm tauri build                  # todos os formatos
+pnpm tauri build --bundles rpm    # só o .rpm (mais rápido)
 ```
+
+O `.rpm` e o `.deb` levam também a CLI (`/usr/bin/syncly`); a AppImage leva só o app.
 
 ### Estrutura
 
