@@ -209,7 +209,7 @@ Antes de commitar:
 
 ```bash
 cargo fmt --all && cargo clippy --workspace --all-targets && cargo test --workspace
-pnpm build
+pnpm test && pnpm build
 ```
 
 Os testes nunca usam a conta Google real, o keyring real nem o seu `HOME`: o Drive é

@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
 import process from "node:process";
@@ -12,6 +13,12 @@ export default defineConfig({
     outDir: "../dist",
     emptyOutDir: true,
     target: "es2022",
+  },
+  // `pnpm test`: testes ao lado do código (`*.test.ts`), num DOM simulado. Nunca chamam o
+  // Rust — a API é trocada por funções de teste (vi.mock).
+  test: {
+    environment: "happy-dom",
+    include: ["src/**/*.test.ts"],
   },
   // Não esconder erros do Rust no terminal.
   clearScreen: false,

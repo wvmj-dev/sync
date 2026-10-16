@@ -30,7 +30,7 @@ Não presuma que algo existe só porque está nos docs — os docs descrevem o p
 | Planejador, guardas, política de retry, retenção (funções puras) | Ícone na bandeja |
 | Estado em SQLite, config TOML, trava por tarefa, logs em arquivo | |
 | `LocalProvider` e `GDriveProvider` (Drive: OAuth PKCE, keyring, limitador, retry, envio retomável) | Changes API, download/bidirecional |
-| **Prévia** de sincronização (CLI e UI); enviar/listar/baixar arquivos avulsos e criar pasta (`syncly remote`, tela Arquivos) | Testes de frontend |
+| **Prévia** de sincronização (CLI e UI); enviar/listar/baixar arquivos avulsos e criar pasta (`syncly remote`, tela Arquivos) | |
 | Compactar/descompactar zip e tar (`core/src/archive/`, `syncly archive`, tela Compactar) | |
 | **Envio compactado** (`Delivery::Archive`, `service/src/delivery.rs`): versões com data, retenção, pula se nada mudou | Criptografia, manifesto |
 | **Restaurar versão** (`service/src/restore.rs`, `syncly versions`/`restore`, tela Tarefas → Versões) | |
@@ -38,6 +38,7 @@ Não presuma que algo existe só porque está nos docs — os docs descrevem o p
 | **Agendamento** (`core/src/timers.rs` puro, `service/src/schedule.rs`, `os.rs`; `syncly schedule`; modo sem janela `syncly-desktop run <id> --scheduled`) e notificações D-Bus (RN-94); **adiar** sem rede/keyring com nova tentativa pelo systemd (RN-84) | |
 | **Conta a reconectar** (`service/src/auth_watch.rs`; RN-06) pausa os agendamentos dela (RN-85); tela **Preferências** (notificações, transferências, reserva de espaço) | |
 | **Status** (`sync/status.rs` puro, `service/src/status.rs`; `syncly status`; tela Tarefas → Status; foto do destino no `state.db`) | |
+| **Testes do frontend** (`pnpm test`: Vitest + happy-dom; `*.test.ts` ao lado do código, apoio em `ui/src/testing.ts`) | |
 | **Visual** Orchis seguindo o tema do sistema (claro/escuro e destaque via portal, `src-tauri/src/appearance.rs`); guia em `.agents/design.md`; modo de demonstração `?mock` | |
 
 `docs/REGRAS_DE_NEGOCIO.md` marca como *(planejado)* as seções e regras que ainda não existem.
@@ -63,6 +64,7 @@ Gerenciador de pacotes JS: **pnpm** (não use `npm` nem `yarn` — o lockfile é
 cargo test --workspace
 cargo clippy --workspace --all-targets   # deve terminar sem avisos
 cargo fmt --all
+pnpm test                                # testes do frontend (Vitest)
 pnpm build                               # vue-tsc estrito + vite
 pnpm tauri dev                           # app com hot reload (abre uma janela)
 cargo run -p syncly-cli -- preview <tarefa>
@@ -128,7 +130,7 @@ Violar qualquer uma é bug de segurança, mesmo que o código "funcione".
 ## Antes de dizer que terminou
 
 - [ ] `cargo fmt --all`, `cargo clippy --workspace --all-targets` sem avisos, `cargo test --workspace`
-- [ ] `pnpm build`, se mexeu em `ui/` ou nos DTOs
+- [ ] `pnpm test` e `pnpm build`, se mexeu em `ui/` ou nos DTOs
 - [ ] `docs/` atualizados, se alguma regra mudou
 - [ ] Seção **Estado atual** deste arquivo e status do `README.md` atualizados, se algo passou a existir
 - [ ] Revisão com o papel adequado de `.agents/papeis/`

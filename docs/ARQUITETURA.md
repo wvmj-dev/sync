@@ -309,9 +309,11 @@ Planejado: criptografia `age` com manifesto (fase 2e).
 - **Testes**: funções puras com testes unitários; `LocalProvider` + `tempfile` para testes
   de ponta a ponta sem rede; Drive com API simulada (`wiremock`) e cofre em memória
   (`secrets::MemoryStore`) — veja `crates/service/src/test_support.rs`. Nenhum teste usa a
-  conta Google real, o keyring real ou o `HOME` real.
+  conta Google real, o keyring real ou o `HOME` real. No frontend, `pnpm test` (Vitest +
+  happy-dom, `@vue/test-utils`): `*.test.ts` ao lado do código, a API do Rust trocada por
+  `vi.mock` e fixtures em `ui/src/testing.ts` — nenhum teste chama o Tauri.
 - **Checklist antes de commitar**: `cargo fmt`, `cargo clippy --workspace`, `cargo test --workspace`,
-  `pnpm build`.
+  `pnpm test` e `pnpm build`.
 - **Adicionar um provedor**: novo crate `crates/<nome>` implementando `StorageProvider`,
   registrar na fábrica em `syncly-service`, adicionar variante em `AccountKind`. Se o
   provedor usa outro algoritmo de checksum (Dropbox `content_hash`, OneDrive `quickXorHash`),
@@ -337,6 +339,7 @@ Planejado: criptografia `age` com manifesto (fase 2e).
 | `reqwest` 0.13 (HTTP/2, `rustls`) | crate `google-drive3` | Já citado acima; HTTP/2 reaproveita a conexão entre requisições. |
 | `keyring` 4 (Secret Service via `zbus`) | Arquivo cifrado próprio | Cofre do sistema (GNOME Keyring/KWallet), Rust puro, sem libdbus. |
 | `wiremock` nos testes | Testar contra a conta real | Testes do Drive rodam offline, sem credenciais (regra 9 do `AGENTS.md`). |
+| Vitest + happy-dom + `@vue/test-utils` no frontend | jsdom; testes de ponta a ponta no navegador | Usa a própria config do Vite; DOM simulado leve; só dependências de desenvolvimento, com versão fixa e publicada há 14 dias ou mais (cadeia de suprimentos). |
 | `zip` só com deflate (Rust puro) + `tar`/`flate2`/`zstd` | Bibliotecas com todos os compressores (bzip2, lzma em C) | Menos código nativo; cobre os formatos comuns. Extração sempre manual, nunca `unpack()` das bibliotecas (SEG-26). |
 | `fs4` para espaço livre | Ignorar espaço em disco | RN-67: bomba de compressão e disco cheio. |
 | Notificações por D-Bus com `zbus` | `notify-rust`; chamar `notify-send` | O `zbus` já vem com o keyring: nenhum crate novo, sem depender de um programa externo instalado. |
