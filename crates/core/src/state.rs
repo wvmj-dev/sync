@@ -1,13 +1,14 @@
 //! `state.db`: o que o app sabe (índice, execuções, backups). SQLite em WAL,
 //! seguro para GUI e CLI abertos ao mesmo tempo. Pode ser reconstruído (RN-56).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use rusqlite::{Connection, OptionalExtension, params};
 use uuid::Uuid;
 
+use crate::domain::run::{HISTORY_MAX_DAYS, HISTORY_MAX_RUNS};
 use crate::domain::{EntryKind, IndexEntry, RunKind, RunRecord, RunStatus, RunTrigger};
 use crate::error::{CoreError, CoreResult, IoContext};
 use crate::fsutil::create_private_file;
@@ -115,6 +116,13 @@ const MIGRATIONS: &[&str] = &[
     CREATE TABLE remote_snapshot_meta (
         job_id     TEXT PRIMARY KEY,
         fetched_at TEXT NOT NULL
+    );
+",
+    // 5: contas que precisam ser reconectadas (RN-06).
+    r"
+    CREATE TABLE account_status (
+        account_id            TEXT PRIMARY KEY,
+        needs_reconnect_since TEXT NOT NULL
     );
 ",
 ];
@@ -466,6 +474,42 @@ impl StateDb {
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
+    // ---- Contas (RN-06) ----
+
+    /// Marca a conta como "requer reconexão"; mantém a data da primeira vez.
+    pub fn mark_needs_reconnect(&self, account_id: Uuid, at: DateTime<Utc>) -> CoreResult<()> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO account_status (account_id, needs_reconnect_since)
+             VALUES (?1, ?2)",
+            params![account_id.to_string(), ts(at)],
+        )?;
+        Ok(())
+    }
+
+    pub fn clear_needs_reconnect(&self, account_id: Uuid) -> CoreResult<()> {
+        self.conn.execute(
+            "DELETE FROM account_status WHERE account_id = ?1",
+            params![account_id.to_string()],
+        )?;
+        Ok(())
+    }
+
+    /// Contas que precisam ser reconectadas → desde quando.
+    pub fn accounts_needing_reconnect(&self) -> CoreResult<HashMap<Uuid, DateTime<Utc>>> {
+        let mut stmt = self
+            .conn
+            .prepare_cached("SELECT account_id, needs_reconnect_since FROM account_status")?;
+        let rows = stmt.query_map([], |r| {
+            let id: String = r.get(0)?;
+            let since: String = r.get(1)?;
+            Ok((
+                id.parse().map_err(|_| bad_value("conta", &id))?,
+                parse_ts(&since)?,
+            ))
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
     // ---- Foto do destino (RN-103) ----
 
     /// Substitui a foto do destino de uma tarefa.
@@ -607,8 +651,49 @@ impl StateDb {
         Ok(())
     }
 
+    /// A última execução de verdade — um disparo descartado (RN-90) não esconde a execução
+    /// que estava rodando.
     pub fn last_run(&self, job_id: Uuid) -> CoreResult<Option<RunRecord>> {
-        Ok(self.recent_runs(job_id, 1)?.into_iter().next())
+        Ok(self
+            .recent_runs(job_id, 20)?
+            .into_iter()
+            .find(|r| r.status != RunStatus::Discarded))
+    }
+
+    /// RN-84: quantas das últimas execuções seguidas foram adiadas (disparos descartados,
+    /// RN-90, não interrompem a sequência). Conta até [`timers::MAX_RETRIES`] + 1 — o
+    /// suficiente para decidir.
+    ///
+    /// [`timers::MAX_RETRIES`]: crate::timers::MAX_RETRIES
+    pub fn postponed_streak(&self, job_id: Uuid) -> CoreResult<u32> {
+        let limit = crate::timers::MAX_RETRIES * 2 + 1;
+        let streak = self
+            .recent_runs(job_id, limit)?
+            .into_iter()
+            .filter(|r| r.status != RunStatus::Discarded)
+            .take_while(|r| r.status == RunStatus::Postponed)
+            .count();
+        Ok(u32::try_from(streak).unwrap_or(u32::MAX))
+    }
+
+    /// RN-93: apaga execuções com mais de `HISTORY_MAX_DAYS` dias e, por tarefa, as que
+    /// passarem de `HISTORY_MAX_RUNS`. Retorna quantas saíram.
+    pub fn prune_history(&self, now: DateTime<Utc>) -> CoreResult<usize> {
+        let cutoff = now - chrono::Duration::days(HISTORY_MAX_DAYS);
+        let old = self.conn.execute(
+            "DELETE FROM runs WHERE started_at < ?1",
+            params![ts(cutoff)],
+        )?;
+        let extra = self.conn.execute(
+            "DELETE FROM runs WHERE id IN (
+                SELECT id FROM (
+                    SELECT id, ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY started_at DESC) AS n
+                    FROM runs
+                ) WHERE n > ?1
+            )",
+            params![HISTORY_MAX_RUNS],
+        )?;
+        Ok(old + extra)
     }
 
     pub fn recent_runs(&self, job_id: Uuid, limit: u32) -> CoreResult<Vec<RunRecord>> {
@@ -726,6 +811,90 @@ mod tests {
         assert!(db.list_job_archives(Uuid::new_v4()).unwrap().is_empty());
         db.delete_archive(old.id).unwrap();
         assert_eq!(db.list_archives(job, account, "Backups").unwrap().len(), 1);
+    }
+
+    /// Execução fictícia iniciada `days_ago` dias atrás.
+    fn insert_run(db: &StateDb, job: Uuid, days_ago: i64, status: RunStatus) {
+        let at = Utc::now() - chrono::Duration::days(days_ago);
+        db.conn
+            .execute(
+                "INSERT INTO runs (id, job_id, kind, trigger, status, started_at, finished_at)
+                 VALUES (?1, ?2, 'sync', 'scheduled', ?3, ?4, ?4)",
+                params![
+                    Uuid::new_v4().to_string(),
+                    job.to_string(),
+                    status.as_str(),
+                    ts(at)
+                ],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn rn93_historico_limitado_por_idade_e_quantidade() {
+        let db = StateDb::open_in_memory().unwrap();
+        let (a, b) = (Uuid::new_v4(), Uuid::new_v4());
+        insert_run(&db, a, 200, RunStatus::Success);
+        insert_run(&db, a, 10, RunStatus::Success);
+        for _ in 0..(HISTORY_MAX_RUNS + 5) {
+            insert_run(&db, b, 1, RunStatus::Success);
+        }
+        let removed = db.prune_history(Utc::now()).unwrap();
+        assert_eq!(removed, 1 + 5);
+        assert_eq!(db.recent_runs(a, 5000).unwrap().len(), 1);
+        assert_eq!(
+            db.recent_runs(b, 5000).unwrap().len(),
+            usize::try_from(HISTORY_MAX_RUNS).unwrap()
+        );
+        // Nada mais a apagar.
+        assert_eq!(db.prune_history(Utc::now()).unwrap(), 0);
+    }
+
+    #[test]
+    fn rn90_disparo_descartado_nao_vira_a_ultima_execucao() {
+        let db = StateDb::open_in_memory().unwrap();
+        let job = Uuid::new_v4();
+        insert_run(&db, job, 2, RunStatus::Success);
+        insert_run(&db, job, 1, RunStatus::Discarded);
+        assert_eq!(
+            db.last_run(job).unwrap().unwrap().status,
+            RunStatus::Success
+        );
+        assert_eq!(
+            db.recent_runs(job, 5).unwrap()[0].status,
+            RunStatus::Discarded
+        );
+    }
+
+    #[test]
+    fn rn84_adiamentos_seguidos() {
+        let db = StateDb::open_in_memory().unwrap();
+        let job = Uuid::new_v4();
+        assert_eq!(db.postponed_streak(job).unwrap(), 0);
+        insert_run(&db, job, 5, RunStatus::Postponed);
+        insert_run(&db, job, 4, RunStatus::Success);
+        insert_run(&db, job, 3, RunStatus::Postponed);
+        insert_run(&db, job, 2, RunStatus::Discarded);
+        insert_run(&db, job, 1, RunStatus::Postponed);
+        // O sucesso no meio zera a sequência; o descartado não a interrompe.
+        assert_eq!(db.postponed_streak(job).unwrap(), 2);
+        insert_run(&db, job, 0, RunStatus::Failed);
+        assert_eq!(db.postponed_streak(job).unwrap(), 0);
+    }
+
+    #[test]
+    fn rn06_conta_que_precisa_ser_reconectada() {
+        let db = StateDb::open_in_memory().unwrap();
+        let account = Uuid::new_v4();
+        assert!(db.accounts_needing_reconnect().unwrap().is_empty());
+        let first = Utc::now() - chrono::Duration::hours(2);
+        db.mark_needs_reconnect(account, first).unwrap();
+        // Marcar de novo não muda a data da primeira vez.
+        db.mark_needs_reconnect(account, Utc::now()).unwrap();
+        let marked = db.accounts_needing_reconnect().unwrap();
+        assert_eq!(marked[&account].timestamp(), first.timestamp());
+        db.clear_needs_reconnect(account).unwrap();
+        assert!(db.accounts_needing_reconnect().unwrap().is_empty());
     }
 
     #[test]

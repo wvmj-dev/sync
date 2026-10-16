@@ -26,7 +26,7 @@ estão implementadas — o estado de cada fase está em [ARQUITETURA.md §13](AR
 - **RN-03** — O app só opera dentro da pasta raiz. Caminhos de destino são sempre relativos a ela.
 - **RN-04** — Várias contas podem coexistir; cada uma com seus próprios tokens no keyring.
 - **RN-05** — Desconectar uma conta revoga o token no Google, apaga-o do keyring e **desativa** (não apaga) as tarefas que a usavam.
-- **RN-06** — Se o Google recusar a renovação do token (`invalid_grant`), a conta fica com status **requer reautenticação**; todas as execuções dela são abortadas sem novas tentativas até o usuário reconectar. Conectar de novo com o **mesmo e-mail** atualiza a conta existente — as tarefas continuam valendo. *(Hoje a operação falha com "reconecte a conta"; guardar esse status na conta é planejado.)*
+- **RN-06** — Se o Google recusar a renovação do token (`invalid_grant`, login vencido ou revogado) — em qualquer operação: prévia, execução, status, arquivos avulsos, restauração — ou o token sumir do keyring, a conta fica marcada como **precisa reconectar** (Contas mostra o aviso e o botão **Reconectar**). Daí em diante, toda operação dela falha na hora com "reconecte a conta", sem nova tentativa e sem chamar a rede (SEG-07), até o usuário reconectar. Conectar de novo com o **mesmo e-mail** atualiza a conta existente e tira a marca — as tarefas continuam valendo.
 - **RN-07** — Conta local: uma pasta raiz absoluta, existente. O app grava nela um marcador `.syncly-root` e trata a pasta como trata a raiz do Drive (mesmas regras de lixeira e de caminhos). **Sem o marcador, nada é gravado** — protege contra HD desmontado, quando só resta o ponto de montagem vazio.
 - **RN-08** — Se a pasta `Syncly/` registrada numa conta Google for para a lixeira ou sumir, o app **não cria outra silenciosamente**: as operações falham pedindo reconexão. Ao reconectar, ele reencontra a pasta (se tiver sido restaurada) ou cria uma nova.
 
@@ -98,7 +98,7 @@ estão implementadas — o estado de cada fase está em [ARQUITETURA.md §13](AR
 - **RN-43** — Execuções agendadas **nunca** confirmam sozinhas: se a guarda pedir confirmação, a execução fica *aguardando confirmação* e o usuário é notificado.
 - **RN-44** — Não existe exclusão definitiva. Remoto: lixeira do Drive (recuperável por 30 dias). Local (conta local e restaurações): pasta `.syncly-trash/` ou lixeira do sistema.
 - **RN-45** — Na CLI, planos que exigem confirmação só rodam com `--confirm`.
-- **RN-46** — **Reserva de espaço**: antes de enviar, o app consulta a cota. Se o espaço livre após o envio ficar abaixo de **1 GiB** (configurável), a execução é abortada — conta Google cheia para de receber e-mails no Gmail.
+- **RN-46** — **Reserva de espaço**: antes de enviar, o app consulta a cota. Se o espaço livre após o envio ficar abaixo de **1 GiB** (ajustável em **Preferências**, até 1 TiB), a execução é abortada — conta Google cheia para de receber e-mails no Gmail.
 
 ## 7. Envio compactado (versões)
 
@@ -114,7 +114,7 @@ uma transferência só, em vez de milhares.
 - **RN-53** — Antes de compactar, o app checa o espaço no computador (estimativa = tamanho total das fontes + a reserva de RN-67); antes de enviar, a cota da conta com o tamanho real (RN-46).
 - **RN-54** — Retenção (padrão): últimas **3** + a mais recente de cada um dos **7** dias mais recentes que tiverem versão + idem para **4** semanas e **6** meses, em horário local. Configurável na tarefa; mínimo de 1 "últimas".
 - **RN-55** — A retenção só roda **depois** de uma versão nova enviada e verificada, nunca remove a mais recente e só considera versões **registradas pelo app** naquele destino — outros arquivos da pasta nunca entram. Versão renomeada, substituída ou removida fora do app é esquecida, não vai para a lixeira. Remoções vão para a lixeira (RN-44).
-- **RN-56** — Recuperação: o índice pode ser reconstruído a partir do destino (MD5 + `appProperties`), sem reenviar nada (adoção, tabela da seção 5). *(planejado)*
+- **RN-56** — Recuperação: sem o índice (app reinstalado, `state.db` perdido), a próxima execução de uma tarefa arquivo por arquivo reconhece pelo MD5 o que já está idêntico no destino e só refaz o índice ("adotar", tabela da seção 5) — nada é reenviado. O que difere vira conflito (RN-35), nunca sobrescrita. As versões de tarefas compactadas registradas no índice perdido deixam de ser gerenciadas pela retenção (RN-55) e ficam no destino como estão.
 - **RN-59** — Se nada mudou nas fontes desde a última versão (mesmos caminhos, tamanhos e datas, mesmo formato) e ela continua intacta no destino, a execução termina com sucesso **sem enviar nada**.
 
 As guardas da seção 6 valem aqui também: primeira execução com confirmação (RN-36), fonte
@@ -169,16 +169,16 @@ Cada tarefa agendada vira um timer do systemd do usuário, que roda mesmo com o 
 - **RN-81** — Um agendamento por tarefa, qualquer que seja a forma de envio. Para sincronizar e também guardar versões das mesmas pastas, crie duas tarefas com destinos diferentes (RN-17).
 - **RN-82** — Expressão avançada: até 64 caracteres, apenas `[A-Za-z0-9 *-:/,.~]`, validada por `systemd-analyze calendar` antes de salvar.
 - **RN-83** — Execução perdida (computador desligado) roda no próximo boot/login.
-- **RN-84** — Se o keyring estiver bloqueado ou não houver rede, a execução fica **adiada**; notifica após 3 adiamentos seguidos. *(planejado — hoje ela falha e notifica, RN-94)*
-- **RN-85** — Conta em *requer reautenticação* suspende os agendamentos dela. *(planejado — depende de RN-06)*
+- **RN-84** — Execução **agendada** sem conexão com a internet ou com o cofre de senhas do sistema bloqueado fica **adiada** (no histórico, `adiada` com o motivo). Sem rede, o systemd tenta de novo a cada **15 min**, até completar 12 adiamentos seguidos (cerca de 3 h); depois, só no próximo horário. Com o cofre bloqueado, espera o próximo horário — uma nova tentativa automática abriria o pedido de senha na tela a cada 15 min. Avisa **uma vez**, no 3º adiamento seguido. Vale só quando o erro acontece antes de a execução começar; uma execução manual sem rede apenas mostra o erro.
+- **RN-85** — Conta que precisa ser reconectada (RN-06) **pausa** os agendamentos das tarefas dela: o timer sai e a tarefa mostra *Pausada*. Ao reconectar, eles voltam sozinhos.
 
 ## 11. Execuções, histórico e notificações
 
-- **RN-90** — No máximo uma execução por tarefa ao mesmo tempo (trava exclusiva); um disparo concorrente é descartado e registrado.
-- **RN-91** — Status possíveis: `sucesso`, `sucesso_parcial` (alguns itens falharam), `falha`, `abortada` (guarda, espaço, fonte), `aguardando_confirmacao`, `cancelada`, `adiada`.
+- **RN-90** — No máximo uma execução por tarefa ao mesmo tempo (trava exclusiva). Um disparo **agendado** com a tarefa já rodando é descartado e fica no histórico como `descartada` — sem notificação e sem esconder a execução em andamento como "última execução". Um clique manual nessa hora só recebe o aviso "a tarefa já está em execução".
+- **RN-91** — Status possíveis: `sucesso`, `sucesso_parcial` (alguns itens falharam), `falha`, `abortada` (guarda, espaço, fonte), `aguardando_confirmacao`, `cancelada`, `adiada`, `descartada` (RN-90).
 - **RN-92** — Estatísticas por execução: itens e bytes enviados/atualizados/na lixeira/ignorados/com falha, duração.
-- **RN-93** — Histórico mantido por 180 dias ou 1000 execuções por tarefa (o que vier primeiro). *(planejado)*
-- **RN-94** — Execuções **agendadas** notificam na área de trabalho quando terminam em `falha`, `abortada`, `aguardando_confirmacao` ou `sucesso_parcial`. Sucesso é silencioso, e um disparo descartado porque a tarefa já está rodando (RN-90) também. *(Planejado: adiamentos repetidos, RN-84, e escolher o que notificar.)*
+- **RN-93** — Histórico mantido por 180 dias ou 1000 execuções por tarefa (o que vier primeiro); a limpeza roda ao fim de cada execução.
+- **RN-94** — Execuções **agendadas** notificam na área de trabalho conforme **Preferências → Notificações**: *só quando algo precisa de atenção* (padrão — `falha`, `abortada`, `aguardando_confirmacao`, `sucesso_parcial`, conta a reconectar, RN-06, e o 3º adiamento seguido, RN-84), *sempre* (o sucesso também, com um resumo do que foi feito) ou *nunca*. Um disparo descartado porque a tarefa já está rodando (RN-90) nunca notifica.
 - **RN-95** — Cancelar uma execução interrompe as transferências em andamento; o que já foi confirmado permanece no índice (RN-38).
 
 ### Tratamento de erros

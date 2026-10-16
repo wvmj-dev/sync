@@ -15,6 +15,7 @@ import type {
   JobStatus,
   JobSummary,
   PlanPreview,
+  Preferences,
   RemoteItem,
   RunProgress,
   RunReport,
@@ -66,6 +67,10 @@ export const api = {
   appInfo: () => call<AppInfo>("app_info"),
   /** Tema do sistema (claro/escuro, cor de destaque). */
   systemAppearance: () => call<Appearance>("system_appearance"),
+  getPreferences: () => call<Preferences>("get_preferences"),
+  /** Valores fora dos limites voltam com o código `invalid`. */
+  savePreferences: (preferences: Preferences) =>
+    call<Preferences>("save_preferences", { preferences }),
   listAccounts: () => call<AccountSummary[]>("list_accounts"),
   addLocalAccount: (label: string, root: string) =>
     call<AccountSummary>("add_local_account", { label, root }),

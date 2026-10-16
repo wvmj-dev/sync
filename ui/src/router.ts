@@ -4,6 +4,7 @@ import JobsView from "./views/JobsView.vue";
 import AccountsView from "./views/AccountsView.vue";
 import ArchiveView from "./views/ArchiveView.vue";
 import FilesView from "./views/FilesView.vue";
+import PreferencesView from "./views/PreferencesView.vue";
 
 export const router = createRouter({
   // Hash history: funciona com o protocolo customizado do Tauri sem servidor.
@@ -14,5 +15,6 @@ export const router = createRouter({
     { path: "/contas", name: "accounts", component: AccountsView },
     { path: "/arquivos", name: "files", component: FilesView },
     { path: "/compactar", name: "archive", component: ArchiveView },
+    { path: "/preferencias", name: "preferences", component: PreferencesView },
   ],
 });

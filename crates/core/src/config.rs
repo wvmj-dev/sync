@@ -12,12 +12,15 @@ use crate::error::{CoreError, CoreResult, IoContext, ValidationIssue};
 use crate::fsutil::write_atomic;
 
 pub const CONFIG_VERSION: u32 = 1;
+/// RN-46: maior reserva de espaço aceita (1 TiB).
+pub const MAX_FREE_SPACE_MIB: u64 = 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NotifyPolicy {
+    /// Também avisa quando dá certo.
     Always,
-    /// RN-94
+    /// RN-94: só o que precisa de atenção.
     #[default]
     Failures,
     Never,
@@ -156,6 +159,13 @@ impl AppConfig {
             issues.push(ValidationIssue::new(
                 "preferências.transferências paralelas",
                 "deve estar entre 1 e 8",
+            ));
+        }
+        // RN-46: até 1 TiB de reserva.
+        if s.min_free_space_mib > MAX_FREE_SPACE_MIB {
+            issues.push(ValidationIssue::new(
+                "preferências.reserva de espaço",
+                "deve ser de no máximo 1 TiB",
             ));
         }
         if !(1..=10).contains(&s.max_requests_per_second) {

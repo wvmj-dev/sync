@@ -35,6 +35,10 @@ const setupDone = computed(() => steps.value.every((s) => s.done));
 /** O que pede atenção numa tarefa ativa, em uma frase (`null` = nada). */
 function attention(job: JobSummary): string | null {
   if (!job.enabled) return null;
+  // RN-06, RN-85
+  if (job.sync?.scheduleState === "paused" || needsReconnect(job)) {
+    return `está parada: a conta ${job.sync?.accountLabel ?? ""} precisa ser reconectada (Contas → Reconectar).`;
+  }
   if (job.sync?.scheduleState === "not_installed") {
     return "está com o agendamento desligado: o systemd não aceitou o timer (veja os logs).";
   }
@@ -47,9 +51,15 @@ function attention(job: JobSummary): string | null {
       return "aguarda a sua confirmação: execute-a uma vez manualmente.";
     case "partial_success":
       return "terminou com falhas em alguns itens.";
+    case "postponed": // RN-84
+      return `foi adiada: ${job.lastRun.error ?? "sem conexão"}.`;
     default:
       return null;
   }
+}
+
+function needsReconnect(job: JobSummary): boolean {
+  return store.accounts.some((a) => a.id === job.sync?.accountId && !!a.needsReconnectSince);
 }
 
 const needAttention = computed(() => store.jobs.filter((j) => attention(j)));

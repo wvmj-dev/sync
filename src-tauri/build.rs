@@ -3,6 +3,8 @@
 const COMMANDS: &[&str] = &[
     "app_info",
     "system_appearance",
+    "get_preferences",
+    "save_preferences",
     "list_accounts",
     "add_local_account",
     "remove_account",

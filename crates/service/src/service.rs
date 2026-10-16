@@ -13,7 +13,7 @@ use syncly_core::domain::{
 use syncly_core::filters::Filter;
 use syncly_core::lock::JobLock;
 use syncly_core::paths::AppPaths;
-use syncly_core::provider::StorageProvider;
+use syncly_core::provider::{ProviderError, StorageProvider};
 use syncly_core::providers::LocalProvider;
 use syncly_core::state::StateDb;
 use syncly_core::sync::executor::{self, Execution, Progress};
@@ -29,7 +29,7 @@ use uuid::Uuid;
 use crate::delivery::ArchiveExec;
 use crate::dto::{
     AccountSummary, ActionView, AppInfo, JobDraft, JobSummary, MAX_PREVIEW_ACTIONS,
-    MAX_PREVIEW_WARNINGS, PlanPreview, RunReport, SyncSummary, human_bytes,
+    MAX_PREVIEW_WARNINGS, PlanPreview, Preferences, RunReport, SyncSummary, human_bytes,
 };
 use crate::error::{ServiceError, ServiceResult};
 use crate::google::GoogleBackend;
@@ -198,14 +198,37 @@ impl Service {
         }
     }
 
+    // ---- Preferências ----
+
+    pub fn preferences(&self) -> ServiceResult<Preferences> {
+        let s = self.load()?.settings;
+        Ok(Preferences {
+            notify: s.notify,
+            min_free_space_mib: s.min_free_space_mib,
+            max_parallel_transfers: s.max_parallel_transfers,
+        })
+    }
+
+    /// Grava as preferências; valores fora dos limites são recusados sem tocar no arquivo.
+    pub fn save_preferences(&self, p: Preferences) -> ServiceResult<Preferences> {
+        self.mutate(|config| {
+            config.settings.notify = p.notify;
+            config.settings.min_free_space_mib = p.min_free_space_mib;
+            config.settings.max_parallel_transfers = p.max_parallel_transfers;
+            Ok(())
+        })?;
+        self.preferences()
+    }
+
     // ---- Contas ----
 
     pub fn list_accounts(&self) -> ServiceResult<Vec<AccountSummary>> {
         let config = self.load()?;
+        let reconnect = self.state()?.accounts_needing_reconnect()?;
         Ok(config
             .accounts
             .iter()
-            .map(|a| account_summary(&config, a))
+            .map(|a| account_summary(&config, a, reconnect.get(&a.id).copied()))
             .collect())
     }
 
@@ -241,7 +264,7 @@ impl Service {
             config.accounts.push(account);
             Ok(())
         })?;
-        Ok(account_summary(&self.load()?, &saved))
+        Ok(account_summary(&self.load()?, &saved, None))
     }
 
     /// RN-05: as tarefas que usavam a conta são desativadas, não apagadas.
@@ -272,6 +295,7 @@ impl Service {
             }
             Ok(())
         })?;
+        self.state()?.clear_needs_reconnect(id)?;
         // RN-05, RN-18: as tarefas desativadas perdem o timer.
         self.refresh_schedules();
         Ok(())
@@ -572,15 +596,68 @@ impl Service {
         progress: impl Fn(&Progress) + Send + Sync,
     ) -> ServiceResult<RunReport> {
         let result = self.execute_job(id, options, progress).await;
+        let account = self.load().ok().and_then(|c| {
+            let id = c.job(id)?.sync.as_ref()?.destination.account_id;
+            c.account(id).cloned()
+        });
+        // RN-06: login recusado no meio do caminho vira o aviso de reconectar.
+        let result = match (result, &account) {
+            (Err(ServiceError::Core(CoreError::Provider(ProviderError::AuthExpired))), Some(a)) => {
+                Err(ServiceError::NeedsReconnect(a.label.clone()))
+            }
+            (other, _) => other,
+        };
+        // RN-85: conta a reconectar pausa os agendamentos dela.
+        if let Some(a) = &account
+            && self
+                .state()
+                .and_then(|s| Ok(s.accounts_needing_reconnect()?))
+                .is_ok_and(|m| m.contains_key(&a.id))
+        {
+            self.refresh_schedules();
+        }
+        if matches!(result, Err(ServiceError::Core(CoreError::JobLocked))) {
+            // RN-90: disparo agendado com a tarefa já rodando — descartado e registrado.
+            if options.trigger == RunTrigger::Scheduled {
+                self.record_unstarted(id, RunStatus::Discarded, "a tarefa já estava em execução");
+            }
+            return result;
+        }
         // RN-103: a execução mudou o destino — a foto antiga deixa de valer.
-        if let Err(e) = self.state().and_then(|s| Ok(s.clear_snapshot(id)?)) {
-            tracing::warn!("foto do destino não descartada: {e}");
+        // RN-93: e o histórico não cresce para sempre.
+        let cleanup = self.state().and_then(|s| {
+            s.clear_snapshot(id)?;
+            s.prune_history(chrono::Utc::now())?;
+            Ok(())
+        });
+        if let Err(e) = cleanup {
+            tracing::warn!("limpeza depois da execução falhou: {e}");
         }
         // RN-36: a primeira execução manual bem-sucedida ativa o agendamento.
         if options.trigger == RunTrigger::Manual && result.is_ok() {
             self.refresh_schedules();
         }
         result
+    }
+
+    /// Registra no histórico um disparo agendado que não chegou a rodar: descartado porque a
+    /// tarefa já estava em execução (RN-90) ou adiado (RN-84). Falhar aqui só gera um aviso
+    /// no log.
+    pub(crate) fn record_unstarted(&self, id: Uuid, status: RunStatus, message: &str) {
+        let record = || -> ServiceResult<()> {
+            let kind = self
+                .load()?
+                .job(id)
+                .and_then(|j| j.sync.as_ref())
+                .map_or(RunKind::Sync, |s| s.delivery.run_kind());
+            let state = self.state()?;
+            let run = state.start_run(id, kind, RunTrigger::Scheduled)?;
+            state.finish_run(run, status, None, Some(message))?;
+            Ok(())
+        };
+        if let Err(e) = record() {
+            tracing::warn!("disparo agendado ({}) não registrado: {e}", status.as_str());
+        }
     }
 
     async fn execute_job(
@@ -767,10 +844,18 @@ pub(crate) async fn quota_shortfall(
 
 impl Service {
     /// Fábrica de provedores: o único lugar que conhece todos eles (ARQUITETURA.md §2).
+    /// RN-06: conta marcada como "requer reconexão" não tenta a rede.
     pub(crate) async fn provider_for(
         &self,
         account: &Account,
     ) -> ServiceResult<Box<dyn StorageProvider>> {
+        if self
+            .state()?
+            .accounts_needing_reconnect()?
+            .contains_key(&account.id)
+        {
+            return Err(ServiceError::NeedsReconnect(account.label.clone()));
+        }
         match &account.kind {
             AccountKind::Local { root } => Ok(Box::new(LocalProvider::new(root.clone()))),
             AccountKind::GoogleDrive { root_folder_id, .. } => {
@@ -789,7 +874,11 @@ fn clean_patterns(patterns: &[String]) -> Vec<String> {
         .collect()
 }
 
-pub(crate) fn account_summary(config: &AppConfig, account: &Account) -> AccountSummary {
+pub(crate) fn account_summary(
+    config: &AppConfig,
+    account: &Account,
+    needs_reconnect_since: Option<chrono::DateTime<chrono::Utc>>,
+) -> AccountSummary {
     let detail = match &account.kind {
         AccountKind::GoogleDrive { email, .. } => email.clone().unwrap_or_default(),
         AccountKind::Local { root } => root.display().to_string(),
@@ -809,6 +898,7 @@ pub(crate) fn account_summary(config: &AppConfig, account: &Account) -> AccountS
         provider: account.kind.provider_id(),
         detail,
         job_count,
+        needs_reconnect_since,
     }
 }
 
@@ -994,6 +1084,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rn90_disparo_agendado_com_a_tarefa_rodando_fica_no_historico() {
+        let (_tmp, service, source, dest) = setup();
+        let id = job_to_local(&service, source, dest);
+        service.run_job(id, manual(true), |_| {}).await.unwrap();
+        let _held = JobLock::try_acquire(&service.paths.lock_dir, id).unwrap();
+        let scheduled = RunOptions {
+            confirm: false,
+            trigger: RunTrigger::Scheduled,
+        };
+        let err = service.run_job(id, scheduled, |_| {}).await.unwrap_err();
+        assert_eq!(err.code(), "busy");
+        let runs = service.state().unwrap().recent_runs(id, 5).unwrap();
+        assert_eq!(runs[0].status, RunStatus::Discarded);
+        // A última execução de verdade continua sendo a que deu certo.
+        let last = service.list_jobs().unwrap()[0].last_run.clone().unwrap();
+        assert_eq!(last.status, "success");
+        // Um clique manual com a tarefa rodando só avisa; não vai para o histórico.
+        assert!(service.run_job(id, manual(true), |_| {}).await.is_err());
+        assert_eq!(
+            service.state().unwrap().recent_runs(id, 5).unwrap().len(),
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn rn56_indice_perdido_e_reconstruido_sem_reenviar() {
+        let (_tmp, service, source, dest) = setup();
+        let id = job_to_local(&service, source, dest);
+        let first = service.run_job(id, manual(true), |_| {}).await.unwrap();
+        assert_eq!(first.report.uploaded, 2);
+
+        // Índice perdido (ex.: app reinstalado): o destino continua com tudo.
+        service.state().unwrap().clear_job(id).unwrap();
+        let again = service.run_job(id, manual(true), |_| {}).await.unwrap();
+        assert_eq!((again.report.uploaded, again.report.updated), (0, 0));
+        assert!(again.report.adopted >= 2, "{:?}", again.report);
+        assert_eq!(
+            service
+                .state()
+                .unwrap()
+                .load_index(id)
+                .unwrap()
+                .values()
+                .filter(|e| e.kind == syncly_core::domain::EntryKind::File)
+                .count(),
+            2
+        );
+    }
+
+    #[tokio::test]
     async fn rn40_fonte_sumida_bloqueia_e_fica_no_historico() {
         let (_tmp, service, source, dest) = setup();
         let id = job_to_local(&service, source.clone(), dest);
@@ -1029,6 +1169,31 @@ mod tests {
         let jobs = service.list_jobs().unwrap();
         assert!(!jobs[0].enabled);
         assert!(service.list_accounts().unwrap().is_empty());
+    }
+
+    #[test]
+    fn rn94_preferencias_validadas_e_gravadas() {
+        let (_tmp, service, _source, _dest) = setup();
+        let mut prefs = service.preferences().unwrap();
+        assert_eq!(prefs.notify, syncly_core::config::NotifyPolicy::Failures);
+        prefs.notify = syncly_core::config::NotifyPolicy::Always;
+        prefs.min_free_space_mib = 2048;
+        prefs.max_parallel_transfers = 2;
+        assert_eq!(service.save_preferences(prefs.clone()).unwrap(), prefs);
+        assert_eq!(service.preferences().unwrap(), prefs);
+
+        // Fora dos limites: recusado, nada muda.
+        let bad = Preferences {
+            max_parallel_transfers: 9,
+            ..prefs.clone()
+        };
+        assert_eq!(service.save_preferences(bad).unwrap_err().code(), "invalid");
+        let bad = Preferences {
+            min_free_space_mib: syncly_core::config::MAX_FREE_SPACE_MIB + 1,
+            ..prefs.clone()
+        };
+        assert_eq!(service.save_preferences(bad).unwrap_err().code(), "invalid");
+        assert_eq!(service.preferences().unwrap(), prefs);
     }
 
     #[test]

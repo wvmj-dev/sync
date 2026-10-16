@@ -5,6 +5,7 @@ import { confirmDanger, pickFolder } from "../api";
 import type { AccountSummary } from "../api/types";
 import Icon from "../components/Icon.vue";
 import { useAppStore } from "../stores/app";
+import { formatRelative } from "../utils/format";
 
 const store = useAppStore();
 const label = ref("");
@@ -77,11 +78,27 @@ function tasks(n: number): string {
       <div v-for="account in googleAccounts" :key="account.id" class="item">
         <Icon class="item-icon" name="cloud" :size="22" />
         <div class="item-main">
-          <div class="item-title">{{ account.label }}</div>
-          <div class="item-sub">{{ tasks(account.jobCount) }}</div>
+          <div class="item-title">
+            {{ account.label }}
+            <span v-if="account.needsReconnectSince" class="chip chip-danger">Precisa reconectar</span>
+          </div>
+          <div v-if="account.needsReconnectSince" class="item-sub">
+            O Google recusou o login {{ formatRelative(account.needsReconnectSince) }}. As tarefas
+            desta conta não rodam e os agendamentos ficam pausados até você reconectar.
+          </div>
+          <div v-else class="item-sub">{{ tasks(account.jobCount) }}</div>
         </div>
         <div class="item-end">
-          <RouterLink class="btn btn-flat btn-small" to="/arquivos">Ver arquivos</RouterLink>
+          <button
+            v-if="account.needsReconnectSince"
+            class="btn btn-primary btn-small"
+            type="button"
+            :disabled="connecting"
+            @click="connectGoogle"
+          >
+            Reconectar
+          </button>
+          <RouterLink v-else class="btn btn-flat btn-small" to="/arquivos">Ver arquivos</RouterLink>
           <button class="btn btn-danger btn-small" type="button" @click="remove(account)">
             Remover
           </button>
@@ -164,6 +181,10 @@ function tasks(n: number): string {
 <style scoped>
 .section.first {
   margin-top: 0;
+}
+
+.item-title .chip {
+  margin-left: 8px;
 }
 
 .count {

@@ -46,11 +46,13 @@ mais usa o mesmo cliente OAuth e você pode revogar tudo quando quiser. Leva ~10
 2. Tipo de aplicativo: **App para computador** (*Desktop app*). Nome: `Syncly desktop`.
 3. **Criar** → **Baixar JSON**.
 
-## 5. Publicar o app (só antes de usar agendamento)
+## 5. Publicar o app (opcional)
 
 **Durante o desenvolvimento e os testes, deixe em "Testando".** Tudo funciona igual para os
 e-mails cadastrados como usuários de teste; a única diferença é que o login **expira a cada
-7 dias** e precisa ser refeito. Isso só atrapalha quando houver sincronização agendada (fase 3).
+7 dias** e precisa ser refeito. Quando vence, a conta mostra **Contas → Reconectar** e os
+agendamentos dela ficam pausados até você reconectar (uma notificação avisa) — dá para usar
+assim no dia a dia; publicar só evita reconectar toda semana.
 
 Para publicar, o Google exige a página **Branding** completa — o botão **Publicar app** fica
 desativado com a mensagem *"conclua a configuração na página de branding"* até lá:

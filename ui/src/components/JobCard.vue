@@ -24,6 +24,8 @@ import Notice from "./Notice.vue";
 import PlanPreview from "./PlanPreview.vue";
 import StatusPanel from "./StatusPanel.vue";
 import VersionList from "./VersionList.vue";
+import { RouterLink } from "vue-router";
+import { useAppStore } from "../stores/app";
 
 const props = defineProps<{ job: JobSummary }>();
 const emit = defineEmits<{ edit: []; remove: []; changed: [] }>();
@@ -60,6 +62,11 @@ onMounted(async () => {
 onUnmounted(() => stopListening?.());
 
 const sync = computed(() => props.job.sync);
+const store = useAppStore();
+/** RN-06: a conta de destino precisa ser reconectada. */
+const reconnect = computed(() =>
+  store.accounts.find((a) => a.id === sync.value?.accountId && a.needsReconnectSince),
+);
 const kind = computed(() => sync.value?.delivery.kind);
 const canRun = computed(() => !!sync.value && props.job.enabled && !running.value);
 const percent = computed(() => {
@@ -90,6 +97,8 @@ const next = computed<{ when: string; detail: string }>(() => {
       return { when: "Depois da 1ª execução manual", detail: s.schedule };
     case "disabled":
       return { when: "Pausada", detail: "A tarefa está desativada" };
+    case "paused":
+      return { when: "Pausada", detail: "Reconecte a conta em Contas" };
     case "not_installed":
       return { when: "Agendamento não instalado", detail: "Veja os logs" };
     default:
@@ -232,6 +241,13 @@ async function cancel() {
     </header>
 
     <div class="task-body">
+      <Notice v-if="reconnect" kind="warn">
+        <p>
+          <strong>A conta {{ reconnect.label }} precisa ser reconectada.</strong> Até lá, esta tarefa
+          não roda<template v-if="sync?.scheduleState === 'paused'"> e o agendamento fica pausado</template>.
+        </p>
+        <p><RouterLink to="/contas">Abrir Contas</RouterLink></p>
+      </Notice>
       <dl class="facts">
         <div v-if="sync">
           <dt>{{ kind === "receive" ? "Origem" : "Destino" }}</dt>
@@ -252,6 +268,10 @@ async function cancel() {
             <span v-if="job.lastRun.items != null || job.lastRun.bytes" class="block muted small num">
               {{ plural(job.lastRun.items ?? 0, "item", "itens") }}<template v-if="job.lastRun.bytes">,
                 {{ formatBytes(job.lastRun.bytes) }}</template>
+            </span>
+            <!-- RN-84: por que foi adiada e quando tenta de novo. -->
+            <span v-else-if="job.lastRun.status === 'postponed' && job.lastRun.error" class="block muted small">
+              {{ job.lastRun.error }}
             </span>
           </dd>
           <dd v-else class="muted">Nunca</dd>

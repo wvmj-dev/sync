@@ -1,4 +1,4 @@
-//! Agendamento pelo systemd do usuário (RN-18, RN-36, RN-80 a RN-83, SEG-22): gera as
+//! Agendamento pelo systemd do usuário (RN-18, RN-36, RN-80 a RN-85, SEG-22): gera as
 //! units de cada tarefa e calcula o que mudar nas instaladas. Tudo puro — quem grava os
 //! arquivos e chama o `systemctl` é o serviço.
 
@@ -15,6 +15,43 @@ use crate::domain::{Job, Schedule};
 pub const HEADER: &str = "# Gerado pelo Syncly — não edite: é recriado a cada alteração da tarefa.";
 const PREFIX: &str = "syncly-";
 
+/// RN-84: código de saída de uma execução agendada adiada que deve ser tentada de novo
+/// (`EX_TEMPFAIL`). A unit pede ao systemd que a reinicie depois de [`RETRY_MINUTES`].
+pub const EXIT_RETRY: u8 = 75;
+/// RN-84: espera entre as tentativas sem rede.
+pub const RETRY_MINUTES: u32 = 15;
+/// RN-84: sem rede, tenta de novo até completar esta quantidade de adiamentos seguidos
+/// (cerca de 3 h); depois, só no próximo horário agendado.
+pub const MAX_RETRIES: u32 = 12;
+/// RN-84: no adiamento seguido de número 3, avisa — uma vez só.
+pub const NOTIFY_AT: u32 = 3;
+
+/// RN-84: por que uma execução agendada foi adiada.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PostponeReason {
+    /// Sem conexão com o provedor.
+    Offline,
+    /// O cofre de senhas do sistema está bloqueado ou indisponível.
+    KeyringLocked,
+}
+
+/// RN-84: o que fazer com um adiamento.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Postponement {
+    /// Pedir ao systemd outra tentativa em [`RETRY_MINUTES`].
+    pub retry: bool,
+    pub notify: bool,
+}
+
+/// RN-84: `streak` conta este adiamento e os anteriores seguidos. Com o cofre bloqueado
+/// não há nova tentativa automática: cada uma abriria de novo o pedido de senha na tela.
+pub fn postponement(reason: PostponeReason, streak: u32) -> Postponement {
+    Postponement {
+        retry: reason == PostponeReason::Offline && streak < MAX_RETRIES,
+        notify: streak == NOTIFY_AT,
+    }
+}
+
 /// Situação do agendamento de uma tarefa, para a interface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -23,6 +60,8 @@ pub enum TimerState {
     Manual,
     /// RN-18: tarefa desativada não tem timer.
     Disabled,
+    /// RN-85: a conta precisa ser reconectada; volta sozinho ao reconectar.
+    Paused,
     /// RN-36: só ativa depois da primeira execução manual bem-sucedida.
     WaitingFirstRun,
     Active,
@@ -35,6 +74,7 @@ impl TimerState {
         match self {
             Self::Manual => "manual",
             Self::Disabled => "disabled",
+            Self::Paused => "paused",
             Self::WaitingFirstRun => "waiting_first_run",
             Self::Active => "active",
             Self::NotInstalled => "not_installed",
@@ -42,13 +82,13 @@ impl TimerState {
     }
 }
 
-/// RN-18, RN-36: a tarefa deve ter timer? `has_success`: já houve uma execução
-/// bem-sucedida do tipo que ela faz.
-pub fn wants_timer(job: &Job, has_success: bool) -> bool {
-    timer_state(job, has_success, true) == TimerState::Active
+/// RN-18, RN-36, RN-85: a tarefa deve ter timer? `has_success`: já houve uma execução
+/// bem-sucedida do tipo que ela faz; `account_ok`: a conta não precisa ser reconectada.
+pub fn wants_timer(job: &Job, has_success: bool, account_ok: bool) -> bool {
+    timer_state(job, has_success, account_ok, true) == TimerState::Active
 }
 
-pub fn timer_state(job: &Job, has_success: bool, installed: bool) -> TimerState {
+pub fn timer_state(job: &Job, has_success: bool, account_ok: bool, installed: bool) -> TimerState {
     let scheduled = job
         .sync
         .as_ref()
@@ -57,6 +97,8 @@ pub fn timer_state(job: &Job, has_success: bool, installed: bool) -> TimerState 
         TimerState::Manual
     } else if !job.enabled {
         TimerState::Disabled
+    } else if !account_ok {
+        TimerState::Paused
     } else if !has_success {
         TimerState::WaitingFirstRun
     } else if installed {
@@ -97,7 +139,7 @@ fn exec_path(exe: &Path) -> Result<String, String> {
     Ok(format!("\"{}\"", text.replace('%', "%%")))
 }
 
-/// RN-80, RN-83: as units (`.service` e `.timer`) de uma tarefa agendada. Só entram
+/// RN-80, RN-83, RN-84: as units (`.service` e `.timer`) de uma tarefa agendada. Só entram
 /// valores gerados pelo app: o UUID, o executável e o `OnCalendar` validado (SEG-22).
 pub fn render_units(
     job_id: Uuid,
@@ -113,6 +155,7 @@ pub fn render_units(
     let service = format!(
         "{HEADER}\n[Unit]\nDescription=Syncly: tarefa {job_id}\n\n\
          [Service]\nType=oneshot\nExecStart={exec} run {job_id} --scheduled\n\
+         RestartForceExitStatus={EXIT_RETRY}\nRestartSec={RETRY_MINUTES}min\n\
          Nice=10\nIOSchedulingClass=idle\n"
     );
     let timer = format!(
@@ -214,26 +257,32 @@ mod tests {
     }
 
     #[test]
-    fn rn18_rn36_quem_tem_timer() {
+    fn rn18_rn36_rn85_quem_tem_timer() {
         assert_eq!(
-            timer_state(&job(true, Schedule::Manual), true, false),
+            timer_state(&job(true, Schedule::Manual), true, true, false),
             TimerState::Manual
         );
         assert_eq!(
-            timer_state(&job(false, daily()), true, true),
+            timer_state(&job(false, daily()), true, true, true),
             TimerState::Disabled
         );
         assert_eq!(
-            timer_state(&job(true, daily()), false, false),
+            timer_state(&job(true, daily()), false, true, false),
             TimerState::WaitingFirstRun
         );
         assert_eq!(
-            timer_state(&job(true, daily()), true, false),
+            timer_state(&job(true, daily()), true, true, false),
             TimerState::NotInstalled
         );
-        assert!(wants_timer(&job(true, daily()), true));
-        assert!(!wants_timer(&job(true, daily()), false));
-        assert!(!wants_timer(&job(false, daily()), true));
+        assert!(wants_timer(&job(true, daily()), true, true));
+        assert!(!wants_timer(&job(true, daily()), false, true));
+        assert!(!wants_timer(&job(false, daily()), true, true));
+        // RN-85: conta a reconectar pausa o timer.
+        assert_eq!(
+            timer_state(&job(true, daily()), true, false, true),
+            TimerState::Paused
+        );
+        assert!(!wants_timer(&job(true, daily()), true, false));
     }
 
     #[test]
@@ -250,6 +299,8 @@ mod tests {
         assert_eq!(timer_name, &format!("syncly-{id}.timer"));
         assert!(timer.contains("OnCalendar=*-*-* 02:30:00\n"));
         assert!(timer.contains("Persistent=true\n"));
+        // RN-84: adiada sem rede → o systemd tenta de novo.
+        assert!(service.contains("RestartForceExitStatus=75\nRestartSec=15min\n"));
         // Nome da tarefa (texto do usuário) nunca entra na unit.
         assert!(!service.contains("Docs") && !timer.contains("Docs"));
 
@@ -268,6 +319,22 @@ mod tests {
         };
         assert!(render_units(id, &injected, Path::new("/usr/bin/syncly")).is_err());
         assert!(render_units(id, &Schedule::Manual, Path::new("/usr/bin/syncly")).is_err());
+    }
+
+    #[test]
+    fn rn84_adiamento_tenta_de_novo_sem_rede_e_avisa_no_terceiro() {
+        use PostponeReason::{KeyringLocked, Offline};
+        let first = postponement(Offline, 1);
+        assert!(first.retry && !first.notify);
+        // Avisa no 3º seguido — e só nele, para não repetir a cada 15 min.
+        assert!(postponement(Offline, NOTIFY_AT).notify);
+        assert!(!postponement(Offline, NOTIFY_AT + 1).notify);
+        // Sem rede por muito tempo: para de insistir e espera o próximo horário.
+        assert!(postponement(Offline, MAX_RETRIES - 1).retry);
+        assert!(!postponement(Offline, MAX_RETRIES).retry);
+        // Cofre bloqueado: nunca tenta sozinho (cada tentativa pediria a senha de novo).
+        assert!(!postponement(KeyringLocked, 1).retry);
+        assert!(postponement(KeyringLocked, NOTIFY_AT).notify);
     }
 
     #[test]

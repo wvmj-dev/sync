@@ -8,6 +8,7 @@ import type {
   JobStatus,
   JobSummary,
   PlanPreview,
+  Preferences,
   RemoteItem,
   VersionItem,
 } from "./types";
@@ -26,8 +27,8 @@ const info: AppInfo = {
 };
 
 const accounts: AccountSummary[] = [
-  { id: "a1", label: "conta@exemplo.com", provider: "google_drive", detail: "conta@exemplo.com", jobCount: 2 },
-  { id: "a2", label: "HD externo", provider: "local", detail: "/run/media/usuario/HD", jobCount: 1 },
+  { id: "a1", label: "conta@exemplo.com", provider: "google_drive", detail: "conta@exemplo.com", jobCount: 2, needsReconnectSince: null },
+  { id: "a2", label: "HD externo", provider: "local", detail: "/run/media/usuario/HD", jobCount: 1, needsReconnectSince: null },
 ];
 
 const daily = { kind: "daily", at: "02:30" } as const;
@@ -190,7 +191,10 @@ function appearance(): Appearance {
   };
 }
 
+let preferences: Preferences = { notify: "failures", minFreeSpaceMib: 1024, maxParallelTransfers: 4 };
+
 const responses: Record<string, () => unknown> = {
+  get_preferences: () => preferences,
   system_appearance: appearance,
   app_info: () => info,
   list_accounts: () => accounts,
@@ -202,7 +206,40 @@ const responses: Record<string, () => unknown> = {
   list_remote: () => remote,
 };
 
-export async function mockCall<T>(command: string, _args?: Record<string, unknown>): Promise<T> {
+/** `?mock&reconnect`: a conta do Google precisa ser reconectada (RN-06, RN-85). */
+if (new URLSearchParams(location.search).has("reconnect")) {
+  const google = accounts.find((a) => a.id === "a1");
+  if (google) google.needsReconnectSince = hoursAgo(20);
+  for (const job of jobs) {
+    if (job.sync?.accountId === "a1" && job.sync.scheduleState === "active") {
+      job.sync.scheduleState = "paused";
+      job.sync.nextRun = null;
+    }
+  }
+}
+
+/** `?mock&postponed`: a última execução agendada de "Documentos" ficou sem rede (RN-84). */
+if (new URLSearchParams(location.search).has("postponed")) {
+  const docs = jobs.find((j) => j.id === "j1");
+  if (docs) {
+    docs.lastRun = {
+      kind: "sync",
+      trigger: "scheduled",
+      status: "postponed",
+      startedAt: hoursAgo(0.2),
+      finishedAt: hoursAgo(0.2),
+      error: "sem conexão com a internet; nova tentativa em 15 min",
+      items: null,
+      bytes: null,
+    };
+  }
+}
+
+export async function mockCall<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  if (command === "save_preferences") {
+    preferences = args?.preferences as Preferences;
+    return preferences as T;
+  }
   const response = responses[command];
   if (!response) throw new Error(`modo de demonstração: '${command}' não simulado`);
   return response() as T;

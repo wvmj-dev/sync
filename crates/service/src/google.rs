@@ -12,6 +12,7 @@ use syncly_gdrive::{
 };
 use uuid::Uuid;
 
+use crate::auth_watch::{AuthWatch, mark_needs_reconnect};
 use crate::dto::AccountSummary;
 use crate::error::{ServiceError, ServiceResult};
 use crate::secrets::account_key;
@@ -68,7 +69,7 @@ impl Service {
         tokio::task::spawn_blocking(move || store.get(&key))
             .await
             .map_err(|e| ServiceError::Internal(e.to_string()))?
-            .map_err(ServiceError::Unavailable)
+            .map_err(ServiceError::Keyring)
     }
 
     async fn secret_set(&self, key: String, value: String) -> ServiceResult<()> {
@@ -76,7 +77,7 @@ impl Service {
         tokio::task::spawn_blocking(move || store.set(&key, &value))
             .await
             .map_err(|e| ServiceError::Internal(e.to_string()))?
-            .map_err(ServiceError::Unavailable)
+            .map_err(ServiceError::Keyring)
     }
 
     pub(crate) async fn secret_delete(&self, key: String) -> ServiceResult<()> {
@@ -84,7 +85,7 @@ impl Service {
         tokio::task::spawn_blocking(move || store.delete(&key))
             .await
             .map_err(|e| ServiceError::Internal(e.to_string()))?
-            .map_err(ServiceError::Unavailable)
+            .map_err(ServiceError::Keyring)
     }
 
     /// Provedor do Drive para uma conta já conectada.
@@ -93,15 +94,11 @@ impl Service {
         account: &Account,
         root_folder_id: Option<String>,
     ) -> ServiceResult<Box<dyn StorageProvider>> {
-        let token = self
-            .secret_get(account_key(account.id))
-            .await?
-            .ok_or_else(|| {
-                ServiceError::Unavailable(format!(
-                    "a conta '{}' precisa ser reconectada (credencial não encontrada no cofre)",
-                    account.label
-                ))
-            })?;
+        let Some(token) = self.secret_get(account_key(account.id)).await? else {
+            // RN-06: sem credencial no cofre, só reconectando.
+            mark_needs_reconnect(&self.paths.state_db(), account.id);
+            return Err(ServiceError::NeedsReconnect(account.label.clone()));
+        };
         let drive = DriveClient::new(
             self.http()?,
             self.google_client()?,
@@ -109,7 +106,12 @@ impl Service {
             self.google.endpoints.clone(),
             self.tuning()?,
         );
-        Ok(Box::new(GDriveProvider::new(drive, root_folder_id)))
+        // RN-06: login expirado em qualquer chamada marca a conta.
+        Ok(Box::new(AuthWatch::new(
+            Box::new(GDriveProvider::new(drive, root_folder_id)),
+            account.id,
+            self.paths.state_db(),
+        )))
     }
 
     /// Conecta (ou reconecta) uma conta Google. `show_url` recebe a URL de login — a CLI
@@ -189,7 +191,10 @@ impl Service {
             return Err(e);
         }
         tracing::info!(account = %id, "conta Google conectada");
-        Ok(account_summary(&self.load()?, &saved))
+        // RN-06, RN-85: reconectada — as tarefas e os agendamentos dela voltam.
+        self.state()?.clear_needs_reconnect(id)?;
+        self.refresh_schedules();
+        Ok(account_summary(&self.load()?, &saved, None))
     }
 
     /// SEG-06: revoga no Google (melhor esforço) e apaga do cofre.

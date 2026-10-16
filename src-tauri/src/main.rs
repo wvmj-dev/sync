@@ -48,6 +48,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             commands::app_info,
             commands::system_appearance,
+            commands::get_preferences,
+            commands::save_preferences,
             commands::list_accounts,
             commands::add_local_account,
             commands::remove_account,

@@ -2,6 +2,7 @@
 //! e só trocam DTOs com ele (ver `dto`).
 
 mod archive;
+mod auth_watch;
 mod delivery;
 pub mod dto;
 mod error;
@@ -27,3 +28,4 @@ pub use syncly_core::archive::{ArchiveFormat, ArchiveProgress};
 pub use syncly_core::domain::RunTrigger;
 pub use syncly_core::paths::AppPaths;
 pub use syncly_core::sync::executor::Progress;
+pub use syncly_core::timers::EXIT_RETRY;

@@ -8,8 +8,8 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 use syncly_service::dto::{
-    AccountSummary, AppInfo, JobDraft, JobStatus, JobSummary, PlanPreview, RemoteItem, RunReport,
-    UploadCompressedRequest, VersionItem,
+    AccountSummary, AppInfo, JobDraft, JobStatus, JobSummary, PlanPreview, Preferences, RemoteItem,
+    RunReport, UploadCompressedRequest, VersionItem,
 };
 use syncly_service::{
     CompressRequest, CompressResult, ExtractResult, Progress, RunOptions, RunTrigger, Service,
@@ -47,6 +47,20 @@ type ApiResult<T> = Result<T, ApiError>;
 #[tauri::command]
 pub async fn app_info(service: State<'_, Service>) -> ApiResult<AppInfo> {
     Ok(service.app_info())
+}
+
+#[tauri::command]
+pub async fn get_preferences(service: State<'_, Service>) -> ApiResult<Preferences> {
+    Ok(service.preferences()?)
+}
+
+/// Grava as preferências (RN-46, RN-94, SEG-41); valores fora dos limites são recusados.
+#[tauri::command]
+pub async fn save_preferences(
+    service: State<'_, Service>,
+    preferences: Preferences,
+) -> ApiResult<Preferences> {
+    Ok(service.save_preferences(preferences)?)
 }
 
 /// Tema do sistema (claro/escuro, cor de destaque). Mudanças chegam pelo evento

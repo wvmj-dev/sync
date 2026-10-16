@@ -124,7 +124,7 @@ src-tauri ──► service ──► gdrive ──► core
 |---|---|---|---|
 | Configuração (contas, tarefas, preferências) | `~/.config/syncly/config.toml` | TOML versionado (`version = 1`) | `0600` |
 | Cliente OAuth do Google | `~/.config/syncly/google-client.json` | JSON baixado do Google Cloud | `0600` |
-| Estado (índice, execuções, versões enviadas e recebidas, foto do destino) | `~/.local/share/syncly/state.db` | SQLite (WAL) | dir `0700` |
+| Estado (índice, execuções, versões enviadas e recebidas, foto do destino, contas a reconectar) | `~/.local/share/syncly/state.db` | SQLite (WAL) | dir `0700` |
 | Temporários (envio compactado, restauração, recebimento, avulsos) | `~/.local/share/syncly/tmp/<tarefa ou avulsos>/.syncly-tmp-*` | apagados ao fim de cada execução | dir `0700` |
 | Logs | `~/.local/state/syncly/logs/` (`syncly-desktop.AAAA-MM-DD.log`, `syncly-cli.…`) | texto, rotação diária, 14 dias; nível via `SYNCLY_LOG` | dir `0700` |
 | Travas | `$XDG_RUNTIME_DIR/syncly/` | arquivo + `flock` | dir `0700` |
@@ -226,11 +226,24 @@ Planejado: criptografia `age` com manifesto (fase 2e).
   chama `systemctl --user daemon-reload/enable/restart/disable`. Idempotente — sem mudança,
   nenhuma chamada. Roda ao salvar, excluir ou executar manualmente uma tarefa, ao remover
   uma conta e ao abrir o app (que também re-aponta os timers se o executável mudou).
-- Só tarefa ativa, agendada e com uma execução manual bem-sucedida tem timer (RN-18, RN-36).
+- Só tarefa ativa, agendada e com uma execução manual bem-sucedida tem timer (RN-18, RN-36);
+  conta a reconectar tira o timer das tarefas dela (estado `paused`, RN-85).
 - `Persistent=true` (roda após o boot se o horário passou, RN-83), `RandomizedDelaySec=2min`,
   `Nice=10` e `IOSchedulingClass=idle` (não atrapalha o uso do computador).
-- **Notificações** (RN-94): ao fim de uma execução agendada que precisa de atenção, uma
-  chamada D-Bus a `org.freedesktop.Notifications` (via `zbus`, que já vinha com o keyring).
+- **Adiar** (RN-84): numa execução agendada, erro de rede ou do keyring antes de começar vira
+  `adiada` no histórico (`Service::run_scheduled`). A decisão é pura
+  (`timers::postponement`, pela contagem de adiamentos seguidos do `state.db`): sem rede, o
+  processo sai com **75** e a unit (`RestartForceExitStatus=75`, `RestartSec=15min`) faz o
+  systemd tentar de novo; com o keyring bloqueado, não — cada tentativa abriria o pedido de
+  senha.
+- **Notificações** (RN-94): ao fim de uma execução agendada, conforme a preferência
+  (`settings.notify`: sempre, só problemas, nunca), uma chamada D-Bus a
+  `org.freedesktop.Notifications` (via `zbus`, que já vinha com o keyring).
+- **Conta a reconectar** (RN-06): `AuthWatch` (`service/src/auth_watch.rs`) envolve o
+  provedor do Drive e marca a conta (tabela `account_status`, migração 5) quando qualquer
+  chamada volta com login recusado. Com a marca, `provider_for` falha na hora com
+  `needs_reconnect`, sem rede; reconectar (`connect_google`) tira a marca e reconcilia os
+  timers.
 - Tudo que toca o sistema fica atrás de `OsIntegration` (`service/src/os.rs`): nos testes,
   `FakeOs` registra as chamadas e as units vão para o diretório temporário; no futuro,
   launchd (macOS) e Agendador de Tarefas (Windows).
@@ -344,7 +357,7 @@ Planejado: criptografia `age` com manifesto (fase 2e).
 | 2c | Restaurar versão (baixar, conferir e descompactar numa pasta nova) | ✅ |
 | 2d | Receber: rotina de recebimento, baixar e descompactar, enviar pasta compactada (RN-107 a RN-110) | ✅ |
 | 2e | Criptografia (age) e manifesto das versões | |
-| 3a | Agendamento (timers do systemd) e notificações das execuções agendadas | ✅ |
+| 3a | Agendamento (timers do systemd), notificações, adiar sem rede (RN-84), conta a reconectar (RN-06, RN-85), Preferências | ✅ |
 | 3b | Ícone na bandeja | |
 | 4 | Changes API, download/bidirecional (requer decisão sobre escopo — ver SEG-03) | |
 | 5 | Outros provedores (OneDrive, Dropbox, S3), macOS/Windows | |

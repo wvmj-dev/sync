@@ -15,6 +15,7 @@ const links: { to: string; label: string; icon: IconName }[] = [
   { to: "/contas", label: "Contas", icon: "accounts" },
   { to: "/arquivos", label: "Arquivos", icon: "files" },
   { to: "/compactar", label: "Compactar", icon: "archive" },
+  { to: "/preferencias", label: "Preferências", icon: "preferences" },
 ];
 </script>
 

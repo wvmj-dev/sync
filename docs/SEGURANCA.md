@@ -38,7 +38,7 @@ chaves de criptografia; integridade dos backups.
 - **SEG-04** — Refresh tokens ficam no keyring do sistema (serviço `syncly`, entrada `account:<id>`). Access tokens só em memória.
 - **SEG-05** — `google-client.json` fica em `~/.config/syncly/` com permissão `0600` e **nunca** é versionado (`.gitignore`). O app recusa clientes do tipo `web` — só `installed` (app para computador).
 - **SEG-06** — "Desconectar" revoga o token em `https://oauth2.googleapis.com/revoke` antes de apagá-lo localmente.
-- **SEG-07** — Falha de renovação (`invalid_grant`) não gera novas tentativas: a conta é marcada para reautenticação (RN-06). Insistir com token inválido gera alertas de segurança.
+- **SEG-07** — Falha de renovação (`invalid_grant`) não gera novas tentativas: a conta é marcada para reautenticação (RN-06) e nenhuma operação dela chama o Google até o usuário reconectar — nem os agendamentos, que ficam pausados (RN-85). Insistir com token inválido gera alertas de segurança.
 - **SEG-08** — O app confere o escopo que o usuário realmente concedeu (na tela do Google dá para desmarcar a permissão). Sem `drive.file`, a conexão falha com mensagem clara.
 
 ### Integridade e proteção dos dados

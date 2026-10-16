@@ -2,6 +2,16 @@
 
 export type SyncMode = "upload" | "mirror";
 
+/** RN-94: o que as execuções agendadas avisam. */
+export type NotifyPolicy = "always" | "failures" | "never";
+
+/** Preferências (RN-46, RN-94, SEG-41). */
+export interface Preferences {
+  notify: NotifyPolicy;
+  minFreeSpaceMib: number;
+  maxParallelTransfers: number;
+}
+
 /** Tema do sistema, lido do portal do desktop. */
 export interface Appearance {
   /** `null` = sem portal do desktop (vale `prefers-color-scheme`). */
@@ -24,6 +34,7 @@ export type Schedule =
 export type ScheduleState =
   | "manual"
   | "disabled"
+  | "paused"
   | "waiting_first_run"
   | "active"
   | "not_installed";
@@ -58,6 +69,8 @@ export interface AccountSummary {
   provider: "google_drive" | "local";
   detail: string;
   jobCount: number;
+  /** RN-06: desde quando a conta precisa ser reconectada (`null` = tudo certo). */
+  needsReconnectSince: string | null;
 }
 
 export type RunStatus =
@@ -68,7 +81,8 @@ export type RunStatus =
   | "aborted"
   | "awaiting_confirmation"
   | "cancelled"
-  | "postponed";
+  | "postponed"
+  | "discarded";
 
 export interface RunSummary {
   kind: "sync" | "backup" | "restore" | "compress" | "receive";
@@ -407,4 +421,6 @@ export type ApiErrorCode =
   | "provider"
   | "internal"
   | "not_found"
-  | "unavailable";
+  | "unavailable"
+  | "needs_reconnect"
+  | "postponed";

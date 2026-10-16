@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use syncly_core::archive::ArchiveFormat;
+use syncly_core::config::NotifyPolicy;
 use syncly_core::domain::{Action, Delivery, PlanStats, RunRecord, RunStatus, Schedule, SyncMode};
 use syncly_core::sync::executor::ExecutionReport;
 use syncly_core::sync::guard::GuardVerdict;
@@ -36,6 +37,8 @@ pub struct AccountSummary {
     /// E-mail (Drive) ou pasta raiz (local).
     pub detail: String,
     pub job_count: usize,
+    /// RN-06: desde quando a conta precisa ser reconectada (`None` = está tudo certo).
+    pub needs_reconnect_since: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -249,6 +252,18 @@ pub struct ArchiveRun {
     pub unchanged: bool,
     /// Versões mantidas no destino depois da retenção.
     pub versions: usize,
+}
+
+/// Preferências editáveis pela interface (RN-46, RN-94, SEG-41).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Preferences {
+    /// RN-94: o que as execuções agendadas avisam.
+    pub notify: NotifyPolicy,
+    /// RN-46: espaço que precisa sobrar na conta depois de um envio.
+    pub min_free_space_mib: u64,
+    /// SEG-41: envios ao mesmo tempo (1 a 8).
+    pub max_parallel_transfers: u8,
 }
 
 /// Versão enviada por uma tarefa compactada (RN-50), para listar e restaurar.

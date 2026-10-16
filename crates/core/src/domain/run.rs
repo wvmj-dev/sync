@@ -43,7 +43,14 @@ str_enum!(RunStatus {
     AwaitingConfirmation => "awaiting_confirmation",
     Cancelled => "cancelled",
     Postponed => "postponed",
+    // RN-90: disparo agendado com a tarefa já em execução.
+    Discarded => "discarded",
 });
+
+/// RN-93: o histórico guarda no máximo 180 dias…
+pub const HISTORY_MAX_DAYS: i64 = 180;
+/// …e 1000 execuções por tarefa (o que vier primeiro).
+pub const HISTORY_MAX_RUNS: u32 = 1000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RunRecord {

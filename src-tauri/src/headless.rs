@@ -1,8 +1,8 @@
 //! Modo sem janela: `syncly-desktop run <id-da-tarefa> --scheduled`, chamado pelos timers
-//! do systemd (RN-80). Roda antes do Tauri — não abre janela nem passa pela instância
+//! do systemd (RN-80, RN-84). Roda antes do Tauri — não abre janela nem passa pela instância
 //! única (SEG-34). Códigos de saída iguais aos da CLI.
 
-use syncly_service::{AppPaths, Service};
+use syncly_service::{AppPaths, EXIT_RETRY, Service};
 use uuid::Uuid;
 
 const USAGE: &str = "uso: syncly-desktop run <id-da-tarefa> --scheduled";
@@ -39,6 +39,11 @@ fn scheduled(paths: AppPaths, id: &str) -> i32 {
             _ => 1,
         },
         Err(e) if e.code() == "needs_confirmation" => 2,
+        // RN-84: adiada sem rede — o systemd tenta de novo.
+        Err(e) if e.retry_later() => {
+            tracing::info!("execução agendada: {e}");
+            i32::from(EXIT_RETRY)
+        }
         Err(e) => {
             tracing::warn!("execução agendada: {e}");
             1

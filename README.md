@@ -28,6 +28,9 @@ e TAR. Tudo verificado por checksum.
 | **Receber**: tarefa que baixa a versão mais recente e descompacta numa pasta nova | ✅ |
 | Criptografia das versões | fase 2e |
 | **Agendamento** (a cada N horas, diário, semanal ou personalizado) pelo systemd, mesmo com o app fechado; notificação quando algo precisa de atenção | ✅ |
+| Sem internet, a execução agendada fica **adiada** e tenta de novo a cada 15 min | ✅ |
+| Login do Google vencido: a conta pede para **reconectar** e os agendamentos dela ficam pausados até lá | ✅ |
+| **Preferências**: o que notificar, transferências simultâneas, reserva de espaço na conta | ✅ |
 | Ícone na bandeja | fase 3b |
 | Sincronização bidirecional | fase 4 |
 | Outros provedores; macOS e Windows | fase 5 |
@@ -60,10 +63,11 @@ Para usar o Google Drive, configure antes o seu projeto no Google Cloud:
 | Tela | Para quê |
 |---|---|
 | **Visão geral** | Primeiros passos, tarefas e última execução, onde ficam config, dados e logs. |
-| **Contas** | **Conectar Google Drive** (abre o navegador; clique em *Continuar* no aviso "O Google não verificou este app" — é o seu próprio app) e adicionar **pastas locais** (HD externo, NAS). |
+| **Contas** | **Conectar Google Drive** (abre o navegador; clique em *Continuar* no aviso "O Google não verificou este app" — é o seu próprio app) e adicionar **pastas locais** (HD externo, NAS). Se o login vencer, a conta mostra **Reconectar**. |
 | **Tarefas** | Criar uma tarefa (o que ela faz + destino + agendamento), **Pré-visualizar** e **Executar**. Na primeira execução o app pede confirmação; o agendamento só começa depois dela. **Status** mostra a situação de cada arquivo e pasta (funciona sem rede; **Atualizar do destino** consulta a nuvem). Em tarefas compactadas, **Versões → Restaurar…** descompacta uma versão numa pasta nova. |
 | **Arquivos** | Navegar na pasta `Syncly/` de uma conta, **enviar** e **baixar** arquivos avulsos, **enviar uma pasta compactada** e **baixar e descompactar** um `.zip`/`.tar.*`. |
 | **Compactar** | Compactar pastas/arquivos em ZIP, TAR.GZ, TAR.ZST ou TAR, e descompactar numa pasta nova. |
+| **Preferências** | Quando avisar (só problemas, sempre ou nunca), quantas transferências ao mesmo tempo e quanto espaço deixar livre na conta. |
 
 O que uma tarefa faz:
 
@@ -89,8 +93,8 @@ Dicas:
 - Da segunda execução em diante, só vai o que mudou.
 - Compactar não é criptografar: as versões ficam legíveis no Drive, como os demais arquivos.
 - Enquanto o app estiver em "Testando" no Google Cloud, o login vale por 7 dias; depois,
-  **Contas → Reconectar**. Até lá, as execuções agendadas no Drive falham — e avisam por
-  notificação.
+  **Contas → Reconectar**. Até lá, os agendamentos dessa conta ficam pausados (uma
+  notificação avisa) e voltam sozinhos ao reconectar.
 - Agendamentos: o primeiro disparo só acontece depois de uma execução manual bem-sucedida.
   Para conferir os timers: `systemctl --user list-timers 'syncly-*'`.
 - Nada some sem querer: o app nunca sobrescreve nem apaga definitivamente — envio que já

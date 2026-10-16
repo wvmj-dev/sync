@@ -101,6 +101,7 @@ export const situationLabel: Record<Situation, string> = {
 export const scheduleStateLabel: Record<ScheduleState, string> = {
   manual: "",
   disabled: "pausado: tarefa desativada",
+  paused: "pausado: reconecte a conta",
   waiting_first_run: "começa depois da 1ª execução manual bem-sucedida",
   active: "ativo",
   not_installed: "não instalado — veja os logs",
@@ -128,6 +129,7 @@ export const runStatusLabel: Record<RunStatus, string> = {
   awaiting_confirmation: "Aguardando confirmação",
   cancelled: "Cancelada",
   postponed: "Adiada",
+  discarded: "Descartada",
 };
 
 export const actionLabel: Record<ActionKind, string> = {

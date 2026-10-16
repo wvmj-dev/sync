@@ -226,7 +226,16 @@ async fn run(cli: Cli) -> Result<ExitCode, syncly_service::ServiceError> {
         }
         Command::Accounts => {
             for a in service.list_accounts()? {
-                println!("{}  {:<20} {:<13} {}", a.id, a.label, a.provider, a.detail);
+                // RN-06
+                let warning = if a.needs_reconnect_since.is_some() {
+                    "  (precisa reconectar: syncly google connect)"
+                } else {
+                    ""
+                };
+                println!(
+                    "{}  {:<20} {:<13} {}{warning}",
+                    a.id, a.label, a.provider, a.detail
+                );
             }
         }
         Command::Schedule => {
@@ -239,6 +248,7 @@ async fn run(cli: Cli) -> Result<ExitCode, syncly_service::ServiceError> {
                     "manual" => "manual",
                     "disabled" => "tarefa desativada",
                     "waiting_first_run" => "ativa após a 1ª execução manual bem-sucedida",
+                    "paused" => "pausado: reconecte a conta (syncly google connect)",
                     "active" => "ativo",
                     _ => "não instalado — veja os logs",
                 };
@@ -311,6 +321,11 @@ async fn run(cli: Cli) -> Result<ExitCode, syncly_service::ServiceError> {
                     reasons.iter().for_each(|r| eprintln!("  - {r}"));
                     eprintln!("Revise com `syncly preview {job:?}` e rode de novo com --confirm.");
                     Ok(ExitCode::from(2))
+                }
+                // RN-84: adiada sem rede — o systemd tenta de novo.
+                Err(e) if e.retry_later() => {
+                    eprintln!("{e}");
+                    Ok(ExitCode::from(syncly_service::EXIT_RETRY))
                 }
                 Err(e) => Err(e),
             };

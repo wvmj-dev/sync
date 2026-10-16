@@ -32,6 +32,7 @@ export const icons = {
   versions: "M12 4 3.5 8.5 12 13l8.5-4.5zM3.5 12.5 12 17l8.5-4.5M3.5 16.5 12 21l8.5-4.5",
   status: "M3 12h4l2.5-6 5 12 2.5-6h4",
   stop: "M7 7h10v10H7z",
+  preferences: "M4 7h9M17 7h3M4 17h3M11 17h9M15 4.5v5M9 14.5v5",
 } as const;
 
 export type IconName = keyof typeof icons;

@@ -13,7 +13,7 @@ use syncly_gdrive::Endpoints;
 use crate::error::{ServiceError, ServiceResult};
 use crate::google::GoogleBackend;
 use crate::os::OsIntegration;
-use crate::secrets::MemoryStore;
+use crate::secrets::{MemoryStore, SecretStore};
 use crate::service::Service;
 
 pub const GOOGLE_CLIENT_JSON: &str =
@@ -81,9 +81,19 @@ pub fn service(base: &Path, google_base: &str) -> Service {
 
 /// Como [`service`], guardando o sistema de mentira para conferir as chamadas.
 pub fn service_with_os(base: &Path, google_base: &str, os: Arc<FakeOs>) -> Service {
+    service_with_secrets(base, google_base, Arc::new(MemoryStore::default()), os)
+}
+
+/// Como [`service_with_os`], com outro cofre (ex.: [`LockedStore`]).
+pub fn service_with_secrets(
+    base: &Path,
+    google_base: &str,
+    secrets: Arc<dyn SecretStore>,
+    os: Arc<FakeOs>,
+) -> Service {
     Service::with_backends(
         AppPaths::in_dir(base),
-        Arc::new(MemoryStore::default()),
+        secrets,
         GoogleBackend {
             endpoints: Endpoints::under(google_base),
             open_browser: false,
@@ -91,4 +101,21 @@ pub fn service_with_os(base: &Path, google_base: &str, os: Arc<FakeOs>) -> Servi
         os,
     )
     .expect("serviço de teste")
+}
+
+/// Cofre bloqueado: tudo falha, como o Secret Service com o pedido de senha recusado.
+pub struct LockedStore;
+
+impl SecretStore for LockedStore {
+    fn get(&self, _key: &str) -> Result<Option<String>, String> {
+        Err("cofre de senhas do sistema indisponível (bloqueado)".into())
+    }
+
+    fn set(&self, _key: &str, _value: &str) -> Result<(), String> {
+        Err("cofre de senhas do sistema indisponível (bloqueado)".into())
+    }
+
+    fn delete(&self, _key: &str) -> Result<(), String> {
+        Err("cofre de senhas do sistema indisponível (bloqueado)".into())
+    }
 }

@@ -30,6 +30,12 @@ const shots = [
   { name: "11-compactar-claro", theme: "light", route: "/compactar" },
   { name: "12-celular-escuro", theme: "dark", route: "/", width: 390, height: 844 },
   { name: "13-celular-tarefas-claro", theme: "light", route: "/tarefas", width: 390, height: 844 },
+  { name: "14-preferencias-escuro", theme: "dark", route: "/preferencias" },
+  { name: "15-reconectar-contas-claro", theme: "light", route: "/contas", query: "&reconnect" },
+  { name: "16-reconectar-visao-geral-escuro", theme: "dark", route: "/", query: "&reconnect" },
+  { name: "17-reconectar-tarefas-claro", theme: "light", route: "/tarefas", query: "&reconnect" },
+  { name: "18-adiada-tarefas-escuro", theme: "dark", route: "/tarefas", query: "&postponed" },
+  { name: "19-adiada-visao-geral-claro", theme: "light", route: "/", query: "&postponed" },
 ];
 
 const profile = mkdtempSync(join(tmpdir(), "syncly-shots-"));
@@ -88,7 +94,9 @@ for (const shot of shots) {
   await send("Emulation.setEmulatedMedia", {
     features: [{ name: "prefers-color-scheme", value: shot.theme }],
   });
-  await send("Page.navigate", { url: `${base}&theme=${shot.theme}#${shot.route}` });
+  await send("Page.navigate", {
+    url: `${base}&theme=${shot.theme}${shot.query ?? ""}#${shot.route}`,
+  });
   await sleep(1500);
   for (const text of shot.click ?? []) {
     await send("Runtime.evaluate", {

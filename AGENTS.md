@@ -25,17 +25,18 @@ Não presuma que algo existe só porque está nos docs — os docs descrevem o p
 
 | Já funciona (fases 0, 1a a 1c, 2a a 2d e 3a) | Ainda **não** existe |
 |---|---|
-| Domínio e validações; **executor** (`sync/executor.rs`) com progresso, cancelamento e histórico | Paralelizar a listagem remota (hoje uma pasta por vez) |
-| Varredura local com filtros, `.syncignore`, bloqueios e exclusões | Conta "requer reconexão" (RN-06, RN-85) |
-| Planejador, guardas, política de retry, retenção (funções puras) | Testar o recebimento entre dois computadores (RN-107) |
-| Estado em SQLite, config TOML, trava por tarefa, logs em arquivo | Ícone na bandeja; adiar execução sem rede/keyring (RN-84) |
+| Domínio e validações; **executor** (`sync/executor.rs`) com progresso, cancelamento e histórico (limitado, RN-93) | Paralelizar a listagem remota (hoje uma pasta por vez) |
+| Varredura local com filtros, `.syncignore`, bloqueios e exclusões | Testar o recebimento entre dois computadores (RN-107) |
+| Planejador, guardas, política de retry, retenção (funções puras) | Ícone na bandeja |
+| Estado em SQLite, config TOML, trava por tarefa, logs em arquivo | |
 | `LocalProvider` e `GDriveProvider` (Drive: OAuth PKCE, keyring, limitador, retry, envio retomável) | Changes API, download/bidirecional |
 | **Prévia** de sincronização (CLI e UI); enviar/listar/baixar arquivos avulsos (`syncly remote`, tela Arquivos) | Testes de frontend |
 | Compactar/descompactar zip e tar (`core/src/archive/`, `syncly archive`, tela Compactar) | |
 | **Envio compactado** (`Delivery::Archive`, `service/src/delivery.rs`): versões com data, retenção, pula se nada mudou | Criptografia, manifesto |
 | **Restaurar versão** (`service/src/restore.rs`, `syncly versions`/`restore`, tela Tarefas → Versões) | |
 | **Receber** (`Delivery::Receive`, `service/src/receive.rs`); avulsos "baixar e descompactar" e "enviar pasta compactada" (`transfers.rs`, `remote get --extract`/`put --compress`) | |
-| **Agendamento** (`core/src/timers.rs` puro, `service/src/schedule.rs`, `os.rs`; `syncly schedule`; modo sem janela `syncly-desktop run <id> --scheduled`) e notificações D-Bus (RN-94) | |
+| **Agendamento** (`core/src/timers.rs` puro, `service/src/schedule.rs`, `os.rs`; `syncly schedule`; modo sem janela `syncly-desktop run <id> --scheduled`) e notificações D-Bus (RN-94); **adiar** sem rede/keyring com nova tentativa pelo systemd (RN-84) | |
+| **Conta a reconectar** (`service/src/auth_watch.rs`; RN-06) pausa os agendamentos dela (RN-85); tela **Preferências** (notificações, transferências, reserva de espaço) | |
 | **Status** (`sync/status.rs` puro, `service/src/status.rs`; `syncly status`; tela Tarefas → Status; foto do destino no `state.db`) | |
 | **Visual** Orchis seguindo o tema do sistema (claro/escuro e destaque via portal, `src-tauri/src/appearance.rs`); guia em `.agents/design.md`; modo de demonstração `?mock` | |
 
