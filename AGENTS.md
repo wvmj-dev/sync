@@ -25,11 +25,11 @@ Não presuma que algo existe só porque está nos docs — os docs descrevem o p
 
 | Já funciona (fases 0, 1a a 1c, 2a a 2d e 3a) | Ainda **não** existe |
 |---|---|
-| Domínio e validações; **executor** (`sync/executor.rs`) com progresso, cancelamento e histórico (limitado, RN-93) | Paralelizar a listagem remota (hoje uma pasta por vez) |
+| Domínio e validações; **executor** (`sync/executor.rs`) com progresso, cancelamento e histórico (limitado, RN-93) | |
 | Varredura local com filtros, `.syncignore`, bloqueios e exclusões | Testar o recebimento entre dois computadores (RN-107) |
 | Planejador, guardas, política de retry, retenção (funções puras) | Ícone na bandeja |
 | Estado em SQLite, config TOML, trava por tarefa, logs em arquivo | |
-| `LocalProvider` e `GDriveProvider` (Drive: OAuth PKCE, keyring, limitador, retry, envio retomável) | Changes API, download/bidirecional |
+| `LocalProvider` (cache de hashes em `.syncly-cache/`) e `GDriveProvider` (Drive: OAuth PKCE, keyring, limitador, retry, envio retomável); listagem do destino em paralelo | Changes API, download/bidirecional |
 | **Prévia** de sincronização (CLI e UI); enviar/listar/baixar arquivos avulsos e criar pasta (`syncly remote`, tela Arquivos) | |
 | Compactar/descompactar zip e tar (`core/src/archive/`, `syncly archive`, tela Compactar) | |
 | **Envio compactado** (`Delivery::Archive`, `service/src/delivery.rs`): versões com data, retenção, pula se nada mudou | Criptografia, manifesto |

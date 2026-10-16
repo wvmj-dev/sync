@@ -2,28 +2,46 @@
 //! usado nos testes de ponta a ponta — sem rede e sem conta Google.
 //!
 //! IDs são caminhos relativos à raiz (`""` = raiz), sempre validados (SEG-20).
-//! Limitação conhecida: a listagem calcula o hash de cada arquivo; um cache
-//! persistente fica para quando o destino local for usado em pastas grandes.
+//! O hash de cada arquivo do destino fica guardado em `.syncly-cache/` (um arquivo por
+//! pasta) e só é recalculado quando o tamanho ou a data de modificação mudam.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
 use crate::domain::EntryKind;
 use crate::domain::rel_path::{RelPath, join_str, parent_str, validate_name};
 use crate::fsutil::create_private_file;
-use crate::hash::{HashKind, copy_hashing, hash_file};
+use crate::hash::{ContentHasher, HashKind, copy_hashing, hash_file};
 use crate::provider::{ProviderError, ProviderResult, RemoteEntry, StorageProvider, StorageQuota};
 
 /// Marcador que identifica a pasta como raiz do Syncly (RN-07). Se sumir — p.ex.
 /// HD desmontado, restando só o ponto de montagem vazio — nada é gravado.
 pub const ROOT_MARKER: &str = ".syncly-root";
 const TRASH_DIR: &str = ".syncly-trash";
+const CACHE_DIR: &str = ".syncly-cache";
 const RESERVED_PREFIX: &str = ".syncly-";
 const HASH: HashKind = HashKind::Md5;
+/// Arquivo de cache maior que isso é ignorado (e refeito).
+const MAX_CACHE_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Hash já calculado de um arquivo do destino. Vale enquanto o tamanho e a data de
+/// modificação forem os mesmos — o mesmo critério do índice para os arquivos locais.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct CachedHash {
+    size: u64,
+    secs: i64,
+    nanos: u32,
+    hash: String,
+}
+
+/// Nome do arquivo → hash, de uma pasta.
+type FolderCache = BTreeMap<String, CachedHash>;
 
 #[derive(Debug, Clone)]
 pub struct LocalProvider {
@@ -74,12 +92,16 @@ impl LocalProvider {
             .fold(self.root.clone(), |acc, part| acc.join(part)))
     }
 
-    /// Itens de uma pasta; sem `with_hash`, não lê o conteúdo dos arquivos.
+    /// Itens de uma pasta; sem `with_hash`, não lê o conteúdo dos arquivos. Com, reaproveita
+    /// os hashes do cache da pasta e só lê os arquivos novos ou alterados.
     async fn list(&self, folder_id: &str, with_hash: bool) -> ProviderResult<Vec<RemoteEntry>> {
         self.check_root()?;
         let dir = self.resolve(folder_id)?;
         let folder_id = folder_id.trim_matches('/').to_string();
+        let cache_file = with_hash.then(|| self.cache_file(&folder_id));
         blocking(move || {
+            let old = cache_file.as_deref().map(read_cache).unwrap_or_default();
+            let mut new = FolderCache::new();
             let mut out = Vec::new();
             for item in fs::read_dir(&dir)? {
                 let item = item?;
@@ -91,15 +113,30 @@ impl LocalProvider {
                 {
                     continue;
                 }
-                out.push(Self::entry(
-                    join_str(&folder_id, &name),
-                    &item.path(),
-                    with_hash,
-                )?);
+                let mut entry = Self::entry(join_str(&folder_id, &name), &item.path(), false)?;
+                if with_hash && entry.kind == EntryKind::File {
+                    entry.hash = Some(cached_hash(&item.path(), &name, &old, &mut new)?);
+                }
+                out.push(entry);
+            }
+            if let Some(file) = cache_file
+                && new != old
+                && let Err(e) = write_cache(&file, &new)
+            {
+                tracing::debug!("cache de hashes não gravado: {e}");
             }
             Ok(out)
         })
         .await
+    }
+
+    /// `.syncly-cache/<md5 do ID da pasta>.json` — nome fixo, qualquer que seja a pasta.
+    fn cache_file(&self, folder_id: &str) -> PathBuf {
+        let mut key = ContentHasher::new(HashKind::Md5);
+        key.update(folder_id.as_bytes());
+        self.root
+            .join(CACHE_DIR)
+            .join(format!("{}.json", key.finish()))
     }
 
     fn entry(id: String, path: &Path, with_hash: bool) -> ProviderResult<RemoteEntry> {
@@ -152,6 +189,65 @@ impl LocalProvider {
         }
         result.map_err(ProviderError::Io)
     }
+}
+
+/// Hash de `path`: do cache, se tamanho e data não mudaram; senão, lendo o arquivo.
+fn cached_hash(
+    path: &Path,
+    name: &str,
+    old: &FolderCache,
+    new: &mut FolderCache,
+) -> ProviderResult<String> {
+    let meta = fs::metadata(path)?;
+    let stamp = meta
+        .modified()
+        .ok()
+        .and_then(|m| m.duration_since(SystemTime::UNIX_EPOCH).ok())
+        .and_then(|d| Some((i64::try_from(d.as_secs()).ok()?, d.subsec_nanos())));
+    let Some((secs, nanos)) = stamp else {
+        // Sem data confiável: sempre lê o arquivo.
+        return Ok(hash_file(path, HASH)?);
+    };
+    let hash = match old.get(name) {
+        Some(c) if c.size == meta.len() && c.secs == secs && c.nanos == nanos => c.hash.clone(),
+        _ => hash_file(path, HASH)?,
+    };
+    new.insert(
+        name.to_string(),
+        CachedHash {
+            size: meta.len(),
+            secs,
+            nanos,
+            hash: hash.clone(),
+        },
+    );
+    Ok(hash)
+}
+
+/// Cache ausente, grande demais ou ilegível vale como vazio: só custa recalcular.
+fn read_cache(file: &Path) -> FolderCache {
+    match fs::metadata(file) {
+        Ok(meta) if meta.len() <= MAX_CACHE_BYTES => fs::read(file)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default(),
+        _ => FolderCache::new(),
+    }
+}
+
+/// Grava num temporário do app e renomeia: nunca deixa um cache pela metade.
+fn write_cache(file: &Path, cache: &FolderCache) -> std::io::Result<()> {
+    let dir = file.parent().unwrap_or(Path::new("."));
+    fs::create_dir_all(dir)?;
+    let tmp = dir.join(format!("{RESERVED_PREFIX}tmp-{}", uuid::Uuid::new_v4()));
+    let result = serde_json::to_vec(cache)
+        .map_err(std::io::Error::other)
+        .and_then(|bytes| fs::write(&tmp, bytes))
+        .and_then(|()| fs::rename(&tmp, file));
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    result
 }
 
 /// Executa E/S bloqueante fora do runtime assíncrono.
@@ -335,6 +431,72 @@ mod tests {
         LocalProvider::initialize(dir.path()).unwrap();
         let p = LocalProvider::new(dir.path());
         (dir, p)
+    }
+
+    fn hash_of(entries: &[RemoteEntry], name: &str) -> String {
+        entries
+            .iter()
+            .find(|e| e.name == name)
+            .and_then(|e| e.hash.clone())
+            .unwrap()
+    }
+
+    /// Troca o conteúdo mantendo tamanho e data — só o cache "não percebe".
+    fn same_size_same_date(path: &Path, contents: &[u8]) {
+        let modified = fs::metadata(path).unwrap().modified().unwrap();
+        fs::write(path, contents).unwrap();
+        let file = fs::File::options().write(true).open(path).unwrap();
+        file.set_modified(modified).unwrap();
+    }
+
+    #[tokio::test]
+    async fn hash_do_destino_fica_em_cache_ate_o_arquivo_mudar() {
+        let (d, p) = provider();
+        let file = d.path().join("Docs/a.txt");
+        touch(&file, b"aaaa");
+        let first = hash_of(&p.list_children("Docs").await.unwrap(), "a.txt");
+        assert_eq!(first, hash_file(&file, HASH).unwrap());
+
+        // Mesmo tamanho e data: vem do cache, sem ler o arquivo.
+        same_size_same_date(&file, b"bbbb");
+        let cached = hash_of(&p.list_children("Docs").await.unwrap(), "a.txt");
+        assert_eq!(cached, first);
+
+        // A data mudou: lê de novo.
+        let later = SystemTime::now() + std::time::Duration::from_secs(5);
+        fs::File::options()
+            .write(true)
+            .open(&file)
+            .unwrap()
+            .set_modified(later)
+            .unwrap();
+        let fresh = hash_of(&p.list_children("Docs").await.unwrap(), "a.txt");
+        assert_eq!(fresh, hash_file(&file, HASH).unwrap());
+        assert_ne!(fresh, first);
+
+        // O cache nunca aparece na listagem nem pode ser acessado por ID (SEG-20).
+        let root = p.list_children("").await.unwrap();
+        assert!(root.iter().all(|e| !e.name.starts_with(RESERVED_PREFIX)));
+        assert!(p.list_children(CACHE_DIR).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn cache_estragado_e_ignorado() {
+        let (d, p) = provider();
+        let file = d.path().join("Docs/a.txt");
+        touch(&file, b"aaaa");
+        p.list_children("Docs").await.unwrap();
+        let cache = p.cache_file("Docs");
+        assert!(cache.is_file());
+        fs::write(&cache, b"{ isto nao e json").unwrap();
+        same_size_same_date(&file, b"bbbb");
+        let hash = hash_of(&p.list_children("Docs").await.unwrap(), "a.txt");
+        assert_eq!(hash, hash_file(&file, HASH).unwrap());
+        // Listar sem hash não cria nem mexe no cache.
+        let other = p.cache_file("Outra");
+        touch(&d.path().join("Outra/b.txt"), b"b");
+        p.list_children_meta("Outra").await.unwrap();
+        assert!(!other.exists());
     }
 
     #[tokio::test]

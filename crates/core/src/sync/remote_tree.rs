@@ -3,10 +3,17 @@
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
+use futures_util::StreamExt;
+use futures_util::stream::FuturesUnordered;
+
 use crate::domain::rel_path::{join_str, validate_name};
 use crate::domain::{EntryKind, RelPath, SkipReason};
 use crate::error::{CoreError, CoreResult};
 use crate::provider::{RemoteEntry, StorageProvider};
+
+/// Pastas listadas ao mesmo tempo. O limitador do provedor (SEG-41) continua valendo: isso só
+/// esconde a espera da rede, não faz mais requisições por segundo.
+pub const PARALLEL_LISTINGS: usize = 4;
 
 #[derive(Debug, Default)]
 pub struct RemoteTree {
@@ -64,10 +71,22 @@ pub async fn load_remote_tree(
         dest_id: Some(current.clone()),
         ..RemoteTree::default()
     };
-    // Uma pasta por vez (pendência: paralelizar com limite — ver ARQUITETURA.md §13).
+    // Até PARALLEL_LISTINGS pastas ao mesmo tempo; o primeiro erro interrompe tudo.
     let mut queue = VecDeque::from([(String::new(), current)]);
-    while let Some((prefix, folder_id)) = queue.pop_front() {
-        let children = provider.list_children(&folder_id).await?;
+    let mut listing = FuturesUnordered::new();
+    loop {
+        while listing.len() < PARALLEL_LISTINGS
+            && let Some((prefix, folder_id)) = queue.pop_front()
+        {
+            listing.push(async move {
+                let children = provider.list_children(&folder_id).await;
+                (prefix, children)
+            });
+        }
+        let Some((prefix, children)) = listing.next().await else {
+            break;
+        };
+        let children = children?;
         let mut counts: HashMap<String, usize> = HashMap::new();
         for child in &children {
             *counts.entry(child.name.clone()).or_default() += 1;
@@ -88,13 +107,20 @@ pub async fn load_remote_tree(
             tree.entries.insert(rel, child);
         }
     }
+    // A ordem de chegada varia com o paralelismo; o resultado, não.
+    tree.invalid_names.sort();
     Ok(tree)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provider::{HashKind, ProviderResult, StorageQuota};
     use crate::providers::LocalProvider;
+    use async_trait::async_trait;
+    use std::path::Path;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
 
     #[tokio::test]
     async fn lista_recursivamente_a_partir_do_destino() {
@@ -112,6 +138,90 @@ mod tests {
         let keys: Vec<_> = tree.entries.keys().map(String::as_str).collect();
         assert_eq!(keys, ["Docs", "Docs/sub", "Docs/sub/a.txt"]);
         assert!(tree.entries["Docs/sub/a.txt"].hash.is_some());
+    }
+
+    /// Provedor local lento que mede quantas listagens correm ao mesmo tempo.
+    struct Slow {
+        inner: LocalProvider,
+        now: AtomicUsize,
+        peak: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl StorageProvider for Slow {
+        fn id(&self) -> &'static str {
+            "slow"
+        }
+        fn hash_kind(&self) -> HashKind {
+            HashKind::Md5
+        }
+        async fn app_root(&self) -> ProviderResult<RemoteEntry> {
+            self.inner.app_root().await
+        }
+        async fn list_children(&self, f: &str) -> ProviderResult<Vec<RemoteEntry>> {
+            let now = self.now.fetch_add(1, Ordering::SeqCst) + 1;
+            self.peak.fetch_max(now, Ordering::SeqCst);
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            let out = self.inner.list_children(f).await;
+            self.now.fetch_sub(1, Ordering::SeqCst);
+            out
+        }
+        async fn get(&self, id: &str) -> ProviderResult<Option<RemoteEntry>> {
+            self.inner.get(id).await
+        }
+        async fn create_folder(&self, p: &str, n: &str) -> ProviderResult<RemoteEntry> {
+            self.inner.create_folder(p, n).await
+        }
+        async fn upload_new(&self, p: &str, n: &str, l: &Path) -> ProviderResult<RemoteEntry> {
+            self.inner.upload_new(p, n, l).await
+        }
+        async fn upload_replace(&self, id: &str, l: &Path) -> ProviderResult<RemoteEntry> {
+            self.inner.upload_replace(id, l).await
+        }
+        async fn download(&self, id: &str, d: &Path) -> ProviderResult<()> {
+            self.inner.download(id, d).await
+        }
+        async fn rename(&self, id: &str, n: &str) -> ProviderResult<RemoteEntry> {
+            self.inner.rename(id, n).await
+        }
+        async fn trash(&self, id: &str) -> ProviderResult<()> {
+            self.inner.trash(id).await
+        }
+        async fn quota(&self) -> ProviderResult<Option<StorageQuota>> {
+            Ok(None)
+        }
+    }
+
+    #[tokio::test]
+    async fn lista_varias_pastas_ao_mesmo_tempo_com_limite() {
+        let tmp = tempfile::tempdir().unwrap();
+        LocalProvider::initialize(tmp.path()).unwrap();
+        for i in 0..10 {
+            let dir = tmp.path().join(format!("Backup/p{i}/sub"));
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("a.txt"), format!("{i}")).unwrap();
+        }
+        let slow = Slow {
+            inner: LocalProvider::new(tmp.path()),
+            now: AtomicUsize::new(0),
+            peak: AtomicUsize::new(0),
+        };
+        let dest = RelPath::parse("Backup").unwrap();
+        let tree = load_remote_tree(&slow, &dest).await.unwrap();
+        // Mesmo resultado da listagem simples, com paralelismo de verdade e dentro do limite.
+        let plain = load_remote_tree(&LocalProvider::new(tmp.path()), &dest)
+            .await
+            .unwrap();
+        assert_eq!(tree.entries.len(), 30);
+        assert_eq!(
+            tree.entries.keys().collect::<Vec<_>>(),
+            plain.entries.keys().collect::<Vec<_>>()
+        );
+        let peak = slow.peak.load(Ordering::SeqCst);
+        assert!(
+            (2..=PARALLEL_LISTINGS).contains(&peak),
+            "pico de {peak} listagens"
+        );
     }
 
     #[tokio::test]

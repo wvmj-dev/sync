@@ -147,8 +147,9 @@ histórico) e pode ser reconstruído (RN-56).
 3. **Escanear local** (`scanner.rs`) — percorre as fontes aplicando filtros e `.syncignore`;
    registra o que foi excluído (RN-28) e o que não pôde ser lido (RN-27); só calcula hash
    de arquivos cujo tamanho/mtime mudou desde o índice; hashing em paralelo.
-4. **Estado remoto** (`remote_tree.rs`) — hoje: listagem recursiva da pasta destino, uma
-   pasta por vez (paralelizar é pendência); fase 4: Changes API incremental.
+4. **Estado remoto** (`remote_tree.rs`) — hoje: listagem recursiva da pasta destino, até 4
+   pastas ao mesmo tempo (o limitador do provedor continua valendo); fase 4: Changes API
+   incremental.
 5. **Planejar** (`planner.rs`) — função pura: `(local, índice, remoto, modo) → Plano`.
    **Guardas** (`guard.rs`) — bloqueiam planos perigosos (RN-40 a RN-44).
 6. **Confirmação** — na 1ª execução e quando a guarda pede, a execução volta com o código
@@ -281,6 +282,8 @@ Planejado: criptografia `age` com manifesto (fase 2e).
 | Hashing paralelo (`rayon`) | Usa todos os núcleos no 1º scan. |
 | "Adotar" arquivo remoto idêntico (mesmo MD5) | Reinstalar o app ou perder o índice não causa re-upload. |
 | Transferências paralelas (padrão 4, máx. 8) + limitador de taxa | Throughput alto sem estourar cotas. |
+| Listagem do destino com até 4 pastas ao mesmo tempo (`remote_tree::PARALLEL_LISTINGS`) | Esconde a espera da rede em árvores grandes; o limitador segura as requisições por segundo. |
+| Cache de hashes no destino local (`.syncly-cache/`, um JSON por pasta, válido enquanto tamanho e data não mudam) | HD externo grande não é relido inteiro a cada execução. |
 | Upload simples (< 5 MiB) e resumable em blocos de 8 MiB | Menos requisições; arquivos grandes retomam de onde pararam. |
 | `fields=` em toda chamada ao Drive | Respostas pequenas. |
 | Um único `reqwest::Client` (HTTP/2, rustls) | Reuso de conexões TLS. |
@@ -370,7 +373,7 @@ Planejado: criptografia `age` com manifesto (fase 2e).
 
 Limitações conhecidas:
 
-- O `LocalProvider` calcula o hash de cada arquivo do destino a cada listagem — lento para
-  destinos locais grandes na sincronização arquivo por arquivo (o envio compactado não
-  lista conteúdo: usa só os nomes). Um cache persistente fica para uma fase futura.
-- A listagem do destino remoto é feita uma pasta por vez.
+- O cache de hashes do destino local confia em tamanho + data de modificação, como o
+  índice faz com os arquivos locais: um arquivo trocado mantendo os dois (em sistemas de
+  arquivos com data de 2 s, como FAT/exFAT, isso fica mais fácil) só é percebido quando um
+  deles mudar.
