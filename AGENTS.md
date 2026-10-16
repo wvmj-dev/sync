@@ -30,7 +30,7 @@ Não presuma que algo existe só porque está nos docs — os docs descrevem o p
 | Planejador, guardas, política de retry, retenção (funções puras) | Ícone na bandeja |
 | Estado em SQLite, config TOML, trava por tarefa, logs em arquivo | |
 | `LocalProvider` e `GDriveProvider` (Drive: OAuth PKCE, keyring, limitador, retry, envio retomável) | Changes API, download/bidirecional |
-| **Prévia** de sincronização (CLI e UI); enviar/listar/baixar arquivos avulsos (`syncly remote`, tela Arquivos) | Testes de frontend |
+| **Prévia** de sincronização (CLI e UI); enviar/listar/baixar arquivos avulsos e criar pasta (`syncly remote`, tela Arquivos) | Testes de frontend |
 | Compactar/descompactar zip e tar (`core/src/archive/`, `syncly archive`, tela Compactar) | |
 | **Envio compactado** (`Delivery::Archive`, `service/src/delivery.rs`): versões com data, retenção, pula se nada mudou | Criptografia, manifesto |
 | **Restaurar versão** (`service/src/restore.rs`, `syncly versions`/`restore`, tela Tarefas → Versões) | |
@@ -68,7 +68,7 @@ pnpm tauri dev                           # app com hot reload (abre uma janela)
 cargo run -p syncly-cli -- preview <tarefa>
 cargo run -p syncly-cli -- run <tarefa> [--confirm]     # executa de verdade
 cargo run -p syncly-cli -- google connect               # abre o navegador (conta real!)
-cargo run -p syncly-cli -- remote ls|put|get …          # arquivos avulsos em Syncly/
+cargo run -p syncly-cli -- remote ls|mkdir|put|get …    # arquivos avulsos em Syncly/
 cargo run -p syncly-cli -- archive create|extract …     # zip, tar, tar.gz, tar.zst
 cargo run -p syncly-cli -- schedule                     # atualiza os timers (systemd real!)
 cargo run -p syncly-cli -- status <tarefa> [pasta] [--remote]   # situação e última modificação

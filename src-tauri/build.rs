@@ -14,6 +14,7 @@ const COMMANDS: &[&str] = &[
     "preview_job",
     "connect_google",
     "list_remote",
+    "create_remote_folder",
     "upload_file",
     "download_file",
     "download_and_extract",

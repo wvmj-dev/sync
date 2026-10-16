@@ -368,4 +368,3 @@ Limitações conhecidas:
   destinos locais grandes na sincronização arquivo por arquivo (o envio compactado não
   lista conteúdo: usa só os nomes). Um cache persistente fica para uma fase futura.
 - A listagem do destino remoto é feita uma pasta por vez.
-- Na tela Arquivos ainda não há botão para criar pasta (a CLI `remote put` cria as que faltam).

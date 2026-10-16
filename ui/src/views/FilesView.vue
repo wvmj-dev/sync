@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { RouterLink } from "vue-router";
 import { api, errorMessage, onArchiveProgress, pickFiles, pickFolder } from "../api";
 import type { ArchiveFormat, ArchiveProgress, RemoteItem } from "../api/types";
@@ -21,6 +21,10 @@ const notice = ref<{ kind: "ok" | "warning" | "danger"; text: string } | null>(n
 const packing = ref(false);
 const progress = ref<ArchiveProgress | null>(null);
 const format = ref<ArchiveFormat>("zip");
+/** RN-111: linha "Nova pasta" aberta. */
+const creating = ref(false);
+const newName = ref("");
+const nameInput = ref<HTMLInputElement | null>(null);
 
 const percent = computed(() => {
   const p = progress.value;
@@ -70,12 +74,38 @@ async function load() {
 
 function open(folder: string) {
   notice.value = null;
+  creating.value = false;
   path.value = folder;
 }
 
 function changeAccount() {
   notice.value = null;
+  creating.value = false;
   path.value = "";
+}
+
+async function startCreate() {
+  newName.value = "";
+  creating.value = true;
+  await nextTick();
+  nameInput.value?.focus();
+}
+
+/** RN-111: cria na pasta atual; se o nome já existir, nada muda. */
+async function createFolder() {
+  const name = newName.value.trim();
+  if (!name) return;
+  busy.value = `Criando ${name}…`;
+  try {
+    const item = await api.createRemoteFolder(accountId.value, path.value, name);
+    creating.value = false;
+    notice.value = { kind: "ok", text: `Pasta criada: Syncly/${item.path}` };
+    await load();
+  } catch (e) {
+    notice.value = { kind: "danger", text: errorMessage(e) };
+  } finally {
+    busy.value = null;
+  }
 }
 
 async function upload() {
@@ -245,18 +275,38 @@ async function download(item: RemoteItem) {
     <p v-else-if="busy" class="muted">{{ busy }}</p>
 
     <div class="boxed">
-      <nav class="crumbs pad-crumbs" aria-label="Pasta atual">
-        <button type="button" @click="open('')">Syncly</button>
-        <template v-for="c in crumbs" :key="c.path">
-          <span class="sep" aria-hidden="true">/</span>
-          <button type="button" @click="open(c.path)">{{ c.name }}</button>
-        </template>
-      </nav>
+      <div class="files-head">
+        <nav class="crumbs" aria-label="Pasta atual">
+          <button type="button" @click="open('')">Syncly</button>
+          <template v-for="c in crumbs" :key="c.path">
+            <span class="sep" aria-hidden="true">/</span>
+            <button type="button" @click="open(c.path)">{{ c.name }}</button>
+          </template>
+        </nav>
+        <button class="btn btn-flat btn-small" type="button" :disabled="!!busy || creating" @click="startCreate">
+          <Icon name="newFolder" :size="16" />
+          Nova pasta
+        </button>
+      </div>
+
+      <form v-if="creating" class="new-folder" @submit.prevent="createFolder" @keydown.esc="creating = false">
+        <Icon name="folder" class="muted" />
+        <input
+          ref="nameInput"
+          v-model="newName"
+          aria-label="Nome da nova pasta"
+          placeholder="Nome da pasta"
+          maxlength="255"
+          autocomplete="off"
+        />
+        <button class="btn btn-primary btn-small" type="submit" :disabled="!newName.trim() || !!busy">Criar</button>
+        <button class="btn btn-flat btn-small" type="button" @click="creating = false">Cancelar</button>
+      </form>
 
       <p v-if="loading" class="empty">Carregando…</p>
-      <div v-else-if="!items.length" class="empty">
+      <div v-else-if="!items.length && !creating" class="empty">
         <strong>Pasta vazia</strong>
-        <p>Envie um arquivo ou uma pasta compactada para começar.</p>
+        <p>Envie um arquivo ou uma pasta compactada, ou crie uma pasta.</p>
       </div>
       <div v-else class="table-wrap">
         <table class="table">
@@ -339,8 +389,24 @@ async function download(item: RemoteItem) {
   width: 110px;
 }
 
-.pad-crumbs {
+.files-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   padding: 10px 12px;
+}
+
+.new-folder {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px 12px 20px;
+}
+
+.new-folder input {
+  flex: 1;
+  min-width: 0;
 }
 
 .name {

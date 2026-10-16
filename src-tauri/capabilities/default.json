@@ -20,6 +20,7 @@
     "allow-preview-job",
     "allow-connect-google",
     "allow-list-remote",
+    "allow-create-remote-folder",
     "allow-upload-file",
     "allow-download-file",
     "allow-download-and-extract",

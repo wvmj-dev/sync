@@ -248,6 +248,19 @@ pub async fn list_remote(
     Ok(service.list_remote(account_id, &path).await?)
 }
 
+/// RN-111
+#[tauri::command]
+pub async fn create_remote_folder(
+    service: State<'_, Service>,
+    account_id: Uuid,
+    parent: String,
+    name: String,
+) -> ApiResult<RemoteItem> {
+    Ok(service
+        .create_remote_folder(account_id, &parent, &name)
+        .await?)
+}
+
 #[tauri::command]
 pub async fn upload_file(
     service: State<'_, Service>,

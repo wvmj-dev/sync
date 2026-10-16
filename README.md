@@ -65,7 +65,7 @@ Para usar o Google Drive, configure antes o seu projeto no Google Cloud:
 | **Visão geral** | Primeiros passos, tarefas e última execução, onde ficam config, dados e logs. |
 | **Contas** | **Conectar Google Drive** (abre o navegador; clique em *Continuar* no aviso "O Google não verificou este app" — é o seu próprio app) e adicionar **pastas locais** (HD externo, NAS). Se o login vencer, a conta mostra **Reconectar**. |
 | **Tarefas** | Criar uma tarefa (o que ela faz + destino + agendamento), **Pré-visualizar** e **Executar**. Na primeira execução o app pede confirmação; o agendamento só começa depois dela. **Status** mostra a situação de cada arquivo e pasta (funciona sem rede; **Atualizar do destino** consulta a nuvem). Em tarefas compactadas, **Versões → Restaurar…** descompacta uma versão numa pasta nova. |
-| **Arquivos** | Navegar na pasta `Syncly/` de uma conta, **enviar** e **baixar** arquivos avulsos, **enviar uma pasta compactada** e **baixar e descompactar** um `.zip`/`.tar.*`. |
+| **Arquivos** | Navegar na pasta `Syncly/` de uma conta, **criar pastas**, **enviar** e **baixar** arquivos avulsos, **enviar uma pasta compactada** e **baixar e descompactar** um `.zip`/`.tar.*`. |
 | **Compactar** | Compactar pastas/arquivos em ZIP, TAR.GZ, TAR.ZST ou TAR, e descompactar numa pasta nova. |
 | **Preferências** | Quando avisar (só problemas, sempre ou nunca), quantas transferências ao mesmo tempo e quanto espaço deixar livre na conta. |
 
@@ -119,6 +119,7 @@ cargo run -p syncly-cli -- restore Mundo --to ~/Restaurados --version Mundo_2026
 cargo run -p syncly-cli -- google connect             # abre o navegador para autorizar
 cargo run -p syncly-cli -- remote put ~/foto.jpg Testes          # envia para Syncly/Testes/
 cargo run -p syncly-cli -- remote ls Testes
+cargo run -p syncly-cli -- remote mkdir Testes/Fotos                # cria a pasta (nunca duplica)
 cargo run -p syncly-cli -- remote get Testes/foto.jpg ~/Downloads
 cargo run -p syncly-cli -- remote put ~/Fotos Testes --compress --format tar.zst   # pasta → um arquivo
 cargo run -p syncly-cli -- remote get Testes/Fotos.tar.zst ~/Downloads --extract  # numa pasta nova

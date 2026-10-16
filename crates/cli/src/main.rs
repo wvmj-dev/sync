@@ -161,6 +161,11 @@ enum RemoteCommand {
         #[arg(default_value = "", value_name = "PASTA")]
         path: String,
     },
+    /// Cria uma pasta (e as de cima que faltarem). Nunca duplica uma existente.
+    Mkdir {
+        #[arg(value_name = "PASTA")]
+        path: String,
+    },
     /// Envia um arquivo. Nunca sobrescreve um existente.
     Put {
         /// Arquivo; com --compress, também pasta.
@@ -484,6 +489,13 @@ async fn run(cli: Cli) -> Result<ExitCode, syncly_service::ServiceError> {
                         println!("(pasta vazia)");
                     }
                     items.iter().for_each(print_item);
+                }
+                // RN-111
+                RemoteCommand::Mkdir { path } => {
+                    let path = path.trim_matches('/');
+                    let (parent, name) = path.rsplit_once('/').unwrap_or(("", path));
+                    let item = service.create_remote_folder(id, parent, name).await?;
+                    println!("Pasta criada: Syncly/{}", item.path);
                 }
                 RemoteCommand::Put {
                     file,

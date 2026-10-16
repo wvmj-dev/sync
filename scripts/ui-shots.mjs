@@ -36,6 +36,8 @@ const shots = [
   { name: "17-reconectar-tarefas-claro", theme: "light", route: "/tarefas", query: "&reconnect" },
   { name: "18-adiada-tarefas-escuro", theme: "dark", route: "/tarefas", query: "&postponed" },
   { name: "19-adiada-visao-geral-claro", theme: "light", route: "/", query: "&postponed" },
+  { name: "20-nova-pasta-claro", theme: "light", route: "/arquivos", click: ["Nova pasta"] },
+  { name: "21-nova-pasta-celular-escuro", theme: "dark", route: "/arquivos", click: ["Nova pasta"], width: 390, height: 844 },
 ];
 
 const profile = mkdtempSync(join(tmpdir(), "syncly-shots-"));

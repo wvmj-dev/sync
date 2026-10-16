@@ -99,6 +99,27 @@ impl Service {
         Ok(items)
     }
 
+    /// RN-111: cria a pasta `name` dentro de `parent` (as de cima são criadas se faltarem).
+    /// Nunca duplica: se já houver um item com esse nome ali, recusa (RN-104).
+    pub async fn create_remote_folder(
+        &self,
+        account_id: Uuid,
+        parent: &str,
+        name: &str,
+    ) -> ServiceResult<RemoteItem> {
+        validate_name(name).map_err(|e| ServiceError::Invalid(format!("nome da pasta: {e}")))?;
+        let dir = RelPath::parse(parent).map_err(ServiceError::Invalid)?;
+        let provider = self.provider_by_id(account_id).await?;
+        let folder = resolve_folder(provider.as_ref(), &dir, true).await?;
+        ensure_free_name(provider.as_ref(), &folder.id, name, &dir).await?;
+        let entry = provider
+            .create_folder(&folder.id, name)
+            .await
+            .map_err(CoreError::from)?;
+        tracing::info!(account = %account_id, "pasta criada");
+        Ok(to_item(dir.as_str(), entry))
+    }
+
     /// Envia um arquivo local para `remote_dir` (criada se preciso). Nunca sobrescreve
     /// nem duplica (RN-104) e respeita os filtros de arquivos sensíveis (RN-105).
     pub async fn upload_file(
@@ -432,6 +453,52 @@ mod tests {
         assert_eq!(first, dl.join("a.txt"));
         assert_eq!(second, dl.join("a (2).txt"));
         assert_eq!(std::fs::read_to_string(second).unwrap(), "conteúdo");
+    }
+
+    #[tokio::test]
+    async fn rn111_criar_pasta_sem_duplicar() {
+        let tmp = tempfile::tempdir().unwrap();
+        let svc = service(&tmp.path().join("app"), "http://127.0.0.1:9");
+        let hd = tmp.path().join("hd");
+        std::fs::create_dir_all(&hd).unwrap();
+        let account = svc.add_local_account("HD".into(), hd).unwrap().id;
+
+        // As pastas de cima são criadas se faltarem.
+        let item = svc
+            .create_remote_folder(account, "Projetos/2026", "Fotos")
+            .await
+            .unwrap();
+        assert_eq!(
+            (item.path.as_str(), item.kind),
+            ("Projetos/2026/Fotos", "folder")
+        );
+        let listed = svc.list_remote(account, "Projetos/2026").await.unwrap();
+        assert_eq!(listed.len(), 1);
+
+        // RN-104: nem pasta nem arquivo com o mesmo nome.
+        let err = svc
+            .create_remote_folder(account, "Projetos/2026", "Fotos")
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("já existe"), "{err}");
+        let local = tmp.path().join("notas.txt");
+        std::fs::write(&local, "x").unwrap();
+        svc.upload_file(account, &local, "Projetos").await.unwrap();
+        assert!(
+            svc.create_remote_folder(account, "Projetos", "notas.txt")
+                .await
+                .is_err()
+        );
+
+        // Nome inválido nunca chega ao provedor.
+        for bad in ["", "..", "a/b", "a\nb"] {
+            let err = svc
+                .create_remote_folder(account, "", bad)
+                .await
+                .unwrap_err();
+            assert_eq!(err.code(), "invalid", "{bad:?}");
+        }
+        assert_eq!(svc.list_remote(account, "").await.unwrap().len(), 1);
     }
 
     fn names(dir: &Path) -> Vec<String> {

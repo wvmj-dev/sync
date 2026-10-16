@@ -100,6 +100,9 @@ export const api = {
   connectGoogle: () => call<AccountSummary>("connect_google"),
   listRemote: (accountId: string, path: string) =>
     call<RemoteItem[]>("list_remote", { accountId, path }),
+  /** RN-111: nunca duplica um item existente. */
+  createRemoteFolder: (accountId: string, parent: string, name: string) =>
+    call<RemoteItem>("create_remote_folder", { accountId, parent, name }),
   uploadFile: (accountId: string, localPath: string, remoteDir: string) =>
     call<RemoteItem>("upload_file", { accountId, localPath, remoteDir }),
   /** Retorna o caminho onde o arquivo foi salvo. */

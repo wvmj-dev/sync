@@ -236,6 +236,13 @@ if (new URLSearchParams(location.search).has("postponed")) {
 }
 
 export async function mockCall<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  if (command === "create_remote_folder") {
+    const { parent, name } = args as { parent: string; name: string };
+    if (remote.some((r) => r.name === name)) throw new Error(`já existe '${name}' em Syncly/${parent} — nada foi sobrescrito`);
+    const item: RemoteItem = { name, path: parent ? `${parent}/${name}` : name, kind: "folder", size: null, modifiedAt: new Date().toISOString(), modifiedBy: "Você", downloadable: false };
+    if (!parent) remote.unshift(item);
+    return item as T;
+  }
   if (command === "save_preferences") {
     preferences = args?.preferences as Preferences;
     return preferences as T;

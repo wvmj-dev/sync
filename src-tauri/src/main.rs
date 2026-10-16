@@ -59,6 +59,7 @@ fn main() {
             commands::preview_job,
             commands::connect_google,
             commands::list_remote,
+            commands::create_remote_folder,
             commands::upload_file,
             commands::download_file,
             commands::download_and_extract,
