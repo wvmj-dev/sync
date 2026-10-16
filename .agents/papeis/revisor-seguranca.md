@@ -14,7 +14,8 @@ qualquer código de I/O, parsing de dados externos, ou novas dependências.
 
 1. Leia `docs/SEGURANCA.md` e obtenha o diff (`git diff` e `git diff --cached`, ou os
    arquivos indicados).
-2. Verifique cada item abaixo **nos arquivos alterados** e nas suas dependências diretas:
+2. Rode `node scripts/check-boundary.mjs` (itens 1 e 3, de forma automática) e verifique
+   cada item abaixo **nos arquivos alterados** e nas suas dependências diretas:
 
 | # | Verificação | Como conferir |
 |---|---|---|

@@ -38,6 +38,7 @@ Não presuma que algo existe só porque está nos docs — os docs descrevem o p
 | **Agendamento** (`core/src/timers.rs` puro, `service/src/schedule.rs`, `os.rs`; `syncly schedule`; modo sem janela `syncly-desktop run <id> --scheduled`) e notificações D-Bus (RN-94); **adiar** sem rede/keyring com nova tentativa pelo systemd (RN-84) | |
 | **Conta a reconectar** (`service/src/auth_watch.rs`; RN-06) pausa os agendamentos dela (RN-85); tela **Preferências** (notificações, transferências, reserva de espaço) | |
 | **Status** (`sync/status.rs` puro, `service/src/status.rs`; `syncly status`; tela Tarefas → Status; foto do destino no `state.db`) | |
+| **CI** (`.github/workflows/ci.yml`): o checklist abaixo a cada push; `scripts/check-boundary.mjs` confere SEG-30/SEG-32 | |
 | **Testes do frontend** (`pnpm test`: Vitest + happy-dom; `*.test.ts` ao lado do código, apoio em `ui/src/testing.ts`) | |
 | **Visual** Orchis seguindo o tema do sistema (claro/escuro e destaque via portal, `src-tauri/src/appearance.rs`); guia em `.agents/design.md`; modo de demonstração `?mock` | |
 
@@ -130,7 +131,7 @@ Violar qualquer uma é bug de segurança, mesmo que o código "funcione".
 ## Antes de dizer que terminou
 
 - [ ] `cargo fmt --all`, `cargo clippy --workspace --all-targets` sem avisos, `cargo test --workspace`
-- [ ] `pnpm test` e `pnpm build`, se mexeu em `ui/` ou nos DTOs
+- [ ] `pnpm test`, `pnpm build` e `node scripts/check-boundary.mjs`, se mexeu em `ui/`, nos DTOs ou em comandos
 - [ ] `docs/` atualizados, se alguma regra mudou
 - [ ] Seção **Estado atual** deste arquivo e status do `README.md` atualizados, se algo passou a existir
 - [ ] Revisão com o papel adequado de `.agents/papeis/`

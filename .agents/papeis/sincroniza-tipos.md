@@ -32,6 +32,8 @@ Mudanças em `crates/service/src/dto.rs`, tipos do `core` serializados para a UI
    - `COMMANDS` em `src-tauri/build.rs`
    - `allow-<nome-com-hifens>` em `src-tauri/capabilities/default.json`
    - `call("<nome>", { … })` em `ui/src/api/index.ts`
+
+   `node scripts/check-boundary.mjs` confere os cinco de uma vez (o CI também roda).
 3. **Argumentos** — as chaves passadas em `call()` são os nomes dos parâmetros Rust em
    `camelCase` (ex.: parâmetro `root` → `{ root }`; `draft: JobDraft` → `{ draft }`).
 4. **Eventos** — o payload emitido em `src-tauri/src/commands.rs` tem de bater com o tipo

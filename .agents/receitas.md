@@ -83,5 +83,5 @@ Depois crie `$HOME/.config/syncly/config.toml` com uma `[[account]]` local apont
 3. Rode `cargo audit` (ou `cargo deny check`) e `pnpm audit` (SEG-51).
    Escolha a versão mais recente publicada há **14 dias ou mais** (`pnpm view <pacote> time`)
    e, no JS, fixe a versão exata — versão recém-publicada é o alvo típico de pacote
-   comprometido.
+   comprometido. Ações do GitHub, fixe pelo commit (veja `.github/workflows/ci.yml`).
 4. Registre o motivo no commit; se for decisão estrutural, em `docs/ARQUITETURA.md` §12.

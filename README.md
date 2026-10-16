@@ -209,8 +209,10 @@ Antes de commitar:
 
 ```bash
 cargo fmt --all && cargo clippy --workspace --all-targets && cargo test --workspace
-pnpm test && pnpm build
+pnpm test && pnpm build && node scripts/check-boundary.mjs
 ```
+
+O CI do GitHub (`.github/workflows/ci.yml`) roda o mesmo a cada push na `main`.
 
 Os testes nunca usam a conta Google real, o keyring real nem o seu `HOME`: o Drive é
 simulado (`wiremock`) e o cofre roda em memória.

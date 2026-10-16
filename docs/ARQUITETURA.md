@@ -313,7 +313,9 @@ Planejado: criptografia `age` com manifesto (fase 2e).
   happy-dom, `@vue/test-utils`): `*.test.ts` ao lado do código, a API do Rust trocada por
   `vi.mock` e fixtures em `ui/src/testing.ts` — nenhum teste chama o Tauri.
 - **Checklist antes de commitar**: `cargo fmt`, `cargo clippy --workspace`, `cargo test --workspace`,
-  `pnpm test` e `pnpm build`.
+  `pnpm test`, `pnpm build` e `node scripts/check-boundary.mjs` (comandos iguais nos cinco
+  lugares, UI sem HTML cru). O CI (`.github/workflows/ci.yml`) roda o mesmo a cada push na `main` e em pull
+  requests, com as ações fixadas por commit.
 - **Adicionar um provedor**: novo crate `crates/<nome>` implementando `StorageProvider`,
   registrar na fábrica em `syncly-service`, adicionar variante em `AccountKind`. Se o
   provedor usa outro algoritmo de checksum (Dropbox `content_hash`, OneDrive `quickXorHash`),

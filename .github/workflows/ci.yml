@@ -1,0 +1,59 @@
+# A cada push na main e a cada pull request: o checklist "Antes de dizer que terminou" do
+# AGENTS.md. Ações fixadas por commit (o comentário diz a versão) — atualizar de propósito.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: fmt, clippy, testes e build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Bibliotecas do sistema (WebKitGTK do Tauri)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libwebkit2gtk-4.1-dev librsvg2-dev libxdo-dev libssl-dev
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+
+      # Versão do pnpm: campo packageManager do package.json.
+      - uses: pnpm/action-setup@d9184bf108216479bc5a137cc391f4d7b14c870b # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Fronteira Rust ↔ webview (SEG-30, SEG-32)
+        run: node scripts/check-boundary.mjs
+      - name: Testes do frontend (DOM simulado, API trocada por funções de teste)
+        run: pnpm test
+      # Antes do Rust: o Tauri embute o dist/ na compilação do app.
+      - name: Frontend (vue-tsc estrito + vite)
+        run: pnpm build
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Testes (Google simulado, cofre em memória, systemd de mentira)
+        run: cargo test --workspace --locked
