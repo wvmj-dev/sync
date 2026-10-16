@@ -2,6 +2,8 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { api, errorMessage, onArchiveProgress, pickArchive, pickFiles, pickFolder } from "../api";
 import type { ArchiveFormat, ArchiveProgress, CompressResult, ExtractResult } from "../api/types";
+import Icon from "../components/Icon.vue";
+import Notice from "../components/Notice.vue";
 import { archiveFormats as formats, formatBytes } from "../utils/format";
 
 // Compactar
@@ -109,99 +111,118 @@ async function extract() {
 
 <template>
   <header class="page-head">
-    <h1>Compactar</h1>
+    <div>
+      <h1>Compactar</h1>
+      <p class="page-desc">
+        Junte pastas e arquivos num .zip ou .tar, ou descompacte um que você recebeu. Nada
+        existente é sobrescrito.
+      </p>
+    </div>
   </header>
 
-  <div v-if="error" class="banner banner-danger" role="alert">
-    <span>{{ error }}</span>
-    <button class="btn btn-ghost" type="button" @click="error = null">Fechar</button>
+  <div class="stack">
+    <Notice v-if="error" kind="danger" dismissible @close="error = null">{{ error }}</Notice>
+
+    <section v-if="busy" class="boxed pad run" aria-live="polite">
+      <div class="run-head">
+        <strong>{{ busy === "compress" ? "Compactando…" : "Descompactando…" }}</strong>
+        <button class="btn btn-flat btn-small" type="button" @click="api.cancelArchive()">
+          <Icon name="stop" :size="14" />
+          Cancelar
+        </button>
+      </div>
+      <div class="progress" role="progressbar">
+        <div :style="{ width: `${percent ?? 100}%` }" :class="{ indeterminate: percent === null }"></div>
+      </div>
+      <p v-if="progress" class="muted small num">
+        {{ progress.filesDone }}<template v-if="progress.filesTotal"> de {{ progress.filesTotal }}</template>
+        arquivo(s), {{ formatBytes(progress.bytesDone) }}<template v-if="progress.bytesTotal">
+          de {{ formatBytes(progress.bytesTotal) }}</template>
+      </p>
+      <p v-if="progress?.current" class="path ellipsis">{{ progress.current }}</p>
+    </section>
   </div>
 
-  <section v-if="busy" class="card" aria-live="polite">
-    <div class="run-head">
-      <strong>{{ busy === "compress" ? "Compactando…" : "Descompactando…" }}</strong>
-      <button class="btn btn-ghost" type="button" @click="api.cancelArchive()">Cancelar</button>
-    </div>
-    <div class="progress" role="progressbar">
-      <div :style="{ width: `${percent ?? 100}%` }" :class="{ indeterminate: percent === null }"></div>
-    </div>
-    <p v-if="progress" class="muted small">
-      {{ progress.filesDone }}<template v-if="progress.filesTotal"> de {{ progress.filesTotal }}</template>
-      arquivo(s) · {{ formatBytes(progress.bytesDone) }}<template v-if="progress.bytesTotal">
-        de {{ formatBytes(progress.bytesTotal) }}</template>
-    </p>
-    <p v-if="progress?.current" class="muted small run-current">
-      <code>{{ progress.current }}</code>
-    </p>
-  </section>
-
-  <section class="card form">
-    <h2>Compactar pastas e arquivos</h2>
-
-    <div class="field">
-      <span>O que compactar</span>
-      <ul v-if="inputs.length" class="list compact">
-        <li v-for="(p, i) in inputs" :key="p" class="list-row">
-          <code>{{ p }}</code>
-          <button class="btn btn-ghost" type="button" @click="inputs.splice(i, 1)">Remover</button>
-        </li>
-      </ul>
-      <div class="row">
-        <button class="btn" type="button" @click="addFolder">+ Pasta</button>
-        <button class="btn" type="button" @click="addFiles">+ Arquivos</button>
-      </div>
-    </div>
-
-    <fieldset class="field">
-      <legend>Formato</legend>
-      <div class="row">
-        <label v-for="f in formats" :key="f.value" class="choice">
-          <input v-model="format" type="radio" :value="f.value" />
-          <span><strong>{{ f.label }}</strong> <span class="muted small">— {{ f.hint }}</span></span>
-        </label>
-      </div>
-    </fieldset>
-
-    <div class="grid-2">
-      <label class="field">
-        <span>Nome do arquivo (opcional)</span>
-        <input v-model="name" maxlength="200" placeholder="Padrão: nome da pasta" />
-      </label>
-      <div class="field">
-        <span>Salvar em</span>
+  <section class="section">
+    <div class="section-head"><h2>Compactar pastas e arquivos</h2></div>
+    <div class="boxed pad form">
+      <div class="group">
+        <span class="group-title">O que compactar</span>
+        <ul v-if="inputs.length" class="inputs">
+          <li v-for="(p, i) in inputs" :key="p">
+            <Icon name="folder" class="muted" :size="16" />
+            <span class="path">{{ p }}</span>
+            <button
+              class="btn btn-flat btn-small btn-icon"
+              type="button"
+              :aria-label="`Remover ${p}`"
+              @click="inputs.splice(i, 1)"
+            >
+              <Icon name="close" :size="16" />
+            </button>
+          </li>
+        </ul>
         <div class="row">
-          <button class="btn" type="button" @click="chooseOutput">Escolher pasta…</button>
-          <span class="muted small path-preview">{{ outputDir ?? "nenhuma pasta escolhida" }}</span>
+          <button class="btn btn-small" type="button" @click="addFolder">
+            <Icon name="plus" :size="16" />
+            Pasta
+          </button>
+          <button class="btn btn-small" type="button" @click="addFiles">
+            <Icon name="plus" :size="16" />
+            Arquivos
+          </button>
         </div>
       </div>
-    </div>
 
-    <label class="choice">
-      <input v-model="includeSensitive" type="checkbox" />
-      <span>
-        Incluir arquivos sensíveis (<code>.env</code>, chaves, <code>.ssh</code>…).
-        <strong>Não recomendado</strong> se for compartilhar o arquivo.
-      </span>
-    </label>
+      <fieldset class="group">
+        <legend>Formato</legend>
+        <div class="formats">
+          <label v-for="f in formats" :key="f.value" class="format" :class="{ on: format === f.value }">
+            <input v-model="format" type="radio" :value="f.value" class="visually-hidden" />
+            <span class="format-name">{{ f.label }}</span>
+            <span class="format-hint">{{ f.hint }}</span>
+          </label>
+        </div>
+      </fieldset>
 
-    <div class="row end">
-      <button
-        class="btn btn-primary"
-        type="button"
-        :disabled="!inputs.length || !outputDir || !!busy"
-        @click="compress"
-      >
-        Compactar
-      </button>
-    </div>
+      <div class="fields">
+        <label class="field">
+          <span class="label">Nome do arquivo (opcional)</span>
+          <input v-model="name" maxlength="200" placeholder="Padrão: nome da pasta" />
+        </label>
+        <div class="field">
+          <span class="label">Salvar em</span>
+          <div class="row">
+            <button class="btn btn-small" type="button" @click="chooseOutput">Escolher pasta…</button>
+            <span class="path ellipsis">{{ outputDir ?? "" }}</span>
+          </div>
+        </div>
+      </div>
 
-    <div v-if="compressed" class="banner banner-ok">
-      <div>
-        <strong>Criado:</strong> <code>{{ compressed.path }}</code>
-        <p class="small">
-          {{ compressed.files }} arquivo(s), {{ compressed.folders }} pasta(s) —
-          {{ formatBytes(compressed.bytesIn) }} → {{ formatBytes(compressed.bytesOut) }}
-          <template v-if="ratio > 0">({{ ratio }}% menor)</template>
+      <label class="field switch-field">
+        <span>
+          <span class="label">Incluir arquivos sensíveis</span>
+          <span class="hint"><code>.env</code>, chaves, <code>.ssh</code>. Não recomendado se for compartilhar.</span>
+        </span>
+        <input v-model="includeSensitive" class="switch" type="checkbox" role="switch" />
+      </label>
+
+      <div class="row end">
+        <button
+          class="btn btn-primary"
+          type="button"
+          :disabled="!inputs.length || !outputDir || !!busy"
+          @click="compress"
+        >
+          Compactar
+        </button>
+      </div>
+
+      <Notice v-if="compressed" kind="ok" dismissible @close="compressed = null">
+        <p><strong>Criado:</strong> <span class="path">{{ compressed.path }}</span></p>
+        <p class="small num">
+          {{ compressed.files }} arquivo(s), {{ formatBytes(compressed.bytesIn) }} viraram
+          {{ formatBytes(compressed.bytesOut) }}<template v-if="ratio > 0"> ({{ ratio }}% menor)</template>,
           em {{ (compressed.durationMs / 1000).toFixed(1) }} s.
         </p>
         <details v-if="compressed.warnings.length">
@@ -210,63 +231,155 @@ async function extract() {
             <li v-for="w in compressed.warnings" :key="w">{{ w }}</li>
           </ul>
         </details>
-      </div>
-      <button class="btn btn-ghost" type="button" @click="compressed = null">Fechar</button>
+      </Notice>
     </div>
   </section>
 
-  <section class="card form">
-    <h2>Descompactar</h2>
-    <p class="muted small">
-      Aceita <code>.zip</code>, <code>.tar</code>, <code>.tar.gz</code> e <code>.tar.zst</code>.
-      O conteúdo vai sempre para uma <strong>pasta nova</strong> — nada existente é sobrescrito.
-    </p>
-
-    <div class="grid-2">
-      <div class="field">
-        <span>Arquivo compactado</span>
-        <div class="row">
-          <button class="btn" type="button" @click="chooseArchive">Escolher arquivo…</button>
-          <span class="muted small path-preview">{{ archive ?? "nenhum arquivo escolhido" }}</span>
-        </div>
-      </div>
-      <div class="field">
-        <span>Descompactar em</span>
-        <div class="row">
-          <button class="btn" type="button" @click="chooseDest">Escolher pasta…</button>
-          <span class="muted small path-preview">{{ destDir ?? "nenhuma pasta escolhida" }}</span>
-        </div>
-      </div>
-    </div>
-
-    <div class="row end">
-      <button
-        class="btn btn-primary"
-        type="button"
-        :disabled="!archive || !destDir || !!busy"
-        @click="extract"
-      >
-        Descompactar
-      </button>
-    </div>
-
-    <div v-if="extracted" class="banner" :class="extracted.skippedCount ? 'banner-warning' : 'banner-ok'">
+  <section class="section">
+    <div class="section-head">
       <div>
-        <strong>Extraído em:</strong> <code>{{ extracted.dest }}</code>
-        <p class="small">
+        <h2>Descompactar um arquivo</h2>
+        <p class="section-desc">
+          .zip, .tar, .tar.gz e .tar.zst. O conteúdo vai sempre para uma pasta nova; entradas
+          perigosas de arquivos baixados da internet são ignoradas.
+        </p>
+      </div>
+    </div>
+    <div class="boxed pad form">
+      <div class="fields">
+        <div class="field">
+          <span class="label">Arquivo compactado</span>
+          <div class="row">
+            <button class="btn btn-small" type="button" @click="chooseArchive">Escolher arquivo…</button>
+            <span class="path ellipsis">{{ archive ?? "" }}</span>
+          </div>
+        </div>
+        <div class="field">
+          <span class="label">Descompactar em</span>
+          <div class="row">
+            <button class="btn btn-small" type="button" @click="chooseDest">Escolher pasta…</button>
+            <span class="path ellipsis">{{ destDir ?? "" }}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="row end">
+        <button
+          class="btn btn-primary"
+          type="button"
+          :disabled="!archive || !destDir || !!busy"
+          @click="extract"
+        >
+          Descompactar
+        </button>
+      </div>
+
+      <Notice
+        v-if="extracted"
+        :kind="extracted.skippedCount ? 'warn' : 'ok'"
+        dismissible
+        @close="extracted = null"
+      >
+        <p><strong>Extraído em</strong> <span class="path">{{ extracted.dest }}</span></p>
+        <p class="small num">
           {{ extracted.files }} arquivo(s), {{ extracted.folders }} pasta(s),
-          {{ formatBytes(extracted.bytes) }} em {{ (extracted.durationMs / 1000).toFixed(1) }} s.
+          {{ formatBytes(extracted.bytes) }}, em {{ (extracted.durationMs / 1000).toFixed(1) }} s.
         </p>
         <details v-if="extracted.skippedCount">
           <summary>{{ extracted.skippedCount }} entrada(s) ignorada(s) por segurança</summary>
           <ul class="small">
             <li v-for="s in extracted.skipped" :key="s.name">
-              <code>{{ s.name }}</code>: {{ s.reason }}
+              <span class="path">{{ s.name }}</span>: {{ s.reason }}
             </li>
           </ul>
         </details>
-      </div>
-      <button class="btn btn-ghost" type="button" @click="extracted = null">Fechar</button>
+      </Notice>
     </div>
   </section>
 </template>
+
+<style scoped>
+.form {
+  gap: 22px;
+}
+
+.inputs {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.inputs li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.inputs .path {
+  flex: 1;
+  min-width: 0;
+}
+
+.formats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px;
+}
+
+.format {
+  display: grid;
+  gap: 2px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.format:hover {
+  background: var(--fill);
+}
+
+.format.on {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.format:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.format-name {
+  font-weight: 600;
+}
+
+.format-hint {
+  color: var(--fg-2);
+  font-size: 0.85rem;
+}
+
+.switch-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.switch-field > span {
+  display: grid;
+  gap: 2px;
+}
+
+.run {
+  display: grid;
+  gap: 8px;
+}
+
+.run-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+</style>

@@ -3,6 +3,7 @@ import { ref } from "vue";
 import { confirmDanger } from "../api";
 import type { JobDraft, JobSummary } from "../api/types";
 import JobCard from "../components/JobCard.vue";
+import Icon from "../components/Icon.vue";
 import JobForm from "../components/JobForm.vue";
 import { useAppStore } from "../stores/app";
 
@@ -25,36 +26,43 @@ async function remove(job: JobSummary) {
 
 <template>
   <header class="page-head">
-    <h1>Tarefas</h1>
-    <button
-      v-if="editing === undefined"
-      class="btn btn-primary"
-      type="button"
-      @click="editing = null"
-    >
+    <div>
+      <h1>Tarefas</h1>
+      <p class="page-desc">O que vai para onde, e quando. Use a prévia para ver o que vai acontecer.</p>
+    </div>
+    <button v-if="editing === undefined" class="btn btn-primary" type="button" @click="editing = null">
+      <Icon name="plus" :size="16" />
       Nova tarefa
     </button>
   </header>
 
-  <JobForm
-    v-if="editing !== undefined"
-    :key="editing?.id ?? 'new'"
-    :job="editing"
-    :accounts="store.accounts"
-    @save="save"
-    @cancel="editing = undefined"
-  />
+  <div class="stack">
+    <JobForm
+      v-if="editing !== undefined"
+      :key="editing?.id ?? 'new'"
+      :job="editing"
+      :accounts="store.accounts"
+      @save="save"
+      @cancel="editing = undefined"
+    />
 
-  <p v-if="!store.jobs.length && editing === undefined" class="card muted">
-    Nenhuma tarefa ainda. Crie uma para escolher as pastas e o destino.
-  </p>
+    <div v-if="!store.jobs.length && editing === undefined" class="boxed empty">
+      <Icon name="tasks" :size="28" />
+      <strong>Nenhuma tarefa ainda</strong>
+      <p>Uma tarefa diz quais pastas vão para qual destino, e como.</p>
+      <button class="btn btn-primary" type="button" @click="editing = null">
+        <Icon name="plus" :size="16" />
+        Criar a primeira tarefa
+      </button>
+    </div>
 
-  <JobCard
-    v-for="job in store.jobs"
-    :key="job.id"
-    :job="job"
-    @edit="editing = job"
-    @remove="remove(job)"
-    @changed="store.refresh()"
-  />
+    <JobCard
+      v-for="job in store.jobs"
+      :key="job.id"
+      :job="job"
+      @edit="editing = job"
+      @remove="remove(job)"
+      @changed="store.refresh()"
+    />
+  </div>
 </template>

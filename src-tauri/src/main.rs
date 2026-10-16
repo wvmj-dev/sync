@@ -1,6 +1,7 @@
 // Evita uma janela de console extra no Windows em release. NÃO REMOVA.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod appearance;
 mod commands;
 mod headless;
 
@@ -40,10 +41,13 @@ fn main() {
                 tracing::warn!("agendamentos não atualizados: {e}");
             }
             app.manage(service);
+            // Acompanha o tema do sistema (claro/escuro, cor de destaque).
+            tauri::async_runtime::spawn(appearance::watch(app.handle().clone()));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             commands::app_info,
+            commands::system_appearance,
             commands::list_accounts,
             commands::add_local_account,
             commands::remove_account,

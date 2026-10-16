@@ -2,6 +2,14 @@
 
 export type SyncMode = "upload" | "mirror";
 
+/** Tema do sistema, lido do portal do desktop. */
+export interface Appearance {
+  /** `null` = sem portal do desktop (vale `prefers-color-scheme`). */
+  scheme: "light" | "dark" | null;
+  /** Cor de destaque em `#rrggbb`. */
+  accent: string | null;
+}
+
 export type Weekday = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
 
 /** RN-80. Horários em "HH:MM". */

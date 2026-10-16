@@ -35,8 +35,11 @@ Mudanças em `crates/service/src/dto.rs`, tipos do `core` serializados para a UI
 3. **Argumentos** — as chaves passadas em `call()` são os nomes dos parâmetros Rust em
    `camelCase` (ex.: parâmetro `root` → `{ root }`; `draft: JobDraft` → `{ draft }`).
 4. **Eventos** — o payload emitido em `src-tauri/src/commands.rs` tem de bater com o tipo
-   ouvido em `ui/src/api/index.ts`: `run-progress` (`RunProgressEvent` ↔ `RunProgress`) e
-   `archive-progress` (`ArchiveProgress` ↔ `ArchiveProgress`).
+   ouvido em `ui/src/api/index.ts`: `run-progress` (`RunProgressEvent` ↔ `RunProgress`),
+   `archive-progress` (`ArchiveProgress` ↔ `ArchiveProgress`) e `appearance-changed`
+   (`appearance::Appearance` ↔ `Appearance`).
+6. **Modo de demonstração** — todo comando que uma tela chama tem resposta em
+   `ui/src/api/mock.ts` com o mesmo formato do DTO.
 5. Rode `pnpm build` (checagem de tipos) e `cargo build -p syncly-desktop` (valida as
    permissões).
 

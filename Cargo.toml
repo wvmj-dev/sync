@@ -49,7 +49,8 @@ wiremock = "0.6"
 # Só deflate/deflate64 (Rust puro); sem compressores em C além do zstd.
 zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs", "deflate64"] }
 zstd = { version = "0.14", default-features = false, features = ["zstdmt"] }
-# Já vem com o keyring (Secret Service); usado direto para as notificações (RN-94).
+# Já vem com o keyring (Secret Service); usado direto para as notificações (RN-94) e para
+# ler o tema do sistema no app desktop.
 zbus = "5"
 
 # SEG-50

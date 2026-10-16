@@ -4,6 +4,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { ask, open } from "@tauri-apps/plugin-dialog";
 import type {
   AccountSummary,
+  Appearance,
   ArchiveProgress,
   CompressRequest,
   CompressResult,
@@ -39,8 +40,20 @@ function isApiErrorPayload(e: unknown): e is { code: ApiErrorCode; message: stri
 const OUTSIDE_APP =
   "Esta tela só funciona dentro da janela do Syncly. Feche esta aba e rode `pnpm tauri dev`.";
 
+/** Só em desenvolvimento (`pnpm dev`, endereço com `?mock`): dados de exemplo para revisar o
+ * visual no navegador. Fora do build de produção. */
+function mockEnabled(): boolean {
+  return import.meta.env.DEV && new URLSearchParams(location.search).has("mock");
+}
+
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
-  if (!isTauri()) throw new ApiError("unavailable", OUTSIDE_APP);
+  if (!isTauri()) {
+    if (import.meta.env.DEV && mockEnabled()) {
+      const { mockCall } = await import("./mock");
+      return mockCall<T>(command, args);
+    }
+    throw new ApiError("unavailable", OUTSIDE_APP);
+  }
   try {
     return await invoke<T>(command, args);
   } catch (e) {
@@ -51,6 +64,8 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
 
 export const api = {
   appInfo: () => call<AppInfo>("app_info"),
+  /** Tema do sistema (claro/escuro, cor de destaque). */
+  systemAppearance: () => call<Appearance>("system_appearance"),
   listAccounts: () => call<AccountSummary[]>("list_accounts"),
   addLocalAccount: (label: string, root: string) =>
     call<AccountSummary>("add_local_account", { label, root }),
@@ -120,6 +135,12 @@ export async function pickArchive(title: string): Promise<string | null> {
     ],
   });
   return typeof picked === "string" ? picked : null;
+}
+
+/** Mudanças no tema do sistema. */
+export function onAppearanceChanged(handler: (a: Appearance) => void): Promise<UnlistenFn> {
+  if (!isTauri()) return Promise.resolve(() => {});
+  return listen<Appearance>("appearance-changed", (event) => handler(event.payload));
 }
 
 /** Progresso das execuções (um evento por item). Retorna a função para parar de ouvir. */

@@ -4,7 +4,9 @@ import { RouterLink } from "vue-router";
 import { api, errorMessage, onArchiveProgress, pickFiles, pickFolder } from "../api";
 import type { ArchiveFormat, ArchiveProgress, RemoteItem } from "../api/types";
 import { useAppStore } from "../stores/app";
-import { archiveFormats, formatBytes, formatDate } from "../utils/format";
+import Icon from "../components/Icon.vue";
+import Notice from "../components/Notice.vue";
+import { archiveFormats, formatBytes, formatDate, formatRelative } from "../utils/format";
 
 const store = useAppStore();
 
@@ -163,29 +165,44 @@ async function download(item: RemoteItem) {
 
 <template>
   <header class="page-head">
-    <h1>Arquivos</h1>
+    <div>
+      <h1>Arquivos</h1>
+      <p class="page-desc">O que está na pasta <code>Syncly/</code> de cada conta. Envie e baixe arquivos avulsos.</p>
+    </div>
   </header>
 
-  <p v-if="!store.accounts.length" class="card muted">
-    Nenhuma conta ainda. <RouterLink to="/contas">Conecte o Google Drive</RouterLink> ou adicione
-    uma pasta local.
-  </p>
+  <div v-if="!store.accounts.length" class="boxed empty">
+    <Icon name="accounts" :size="28" />
+    <strong>Nenhuma conta ainda</strong>
+    <p>Conecte o Google Drive ou adicione uma pasta local para ver os arquivos.</p>
+    <RouterLink class="btn btn-primary" to="/contas">Abrir Contas</RouterLink>
+  </div>
 
-  <section v-else class="card">
-    <div class="files-toolbar">
-      <select v-model="accountId" aria-label="Conta" @change="changeAccount">
-        <option v-for="a in store.accounts" :key="a.id" :value="a.id">
-          {{ a.label }} ({{ a.provider === "google_drive" ? "Google Drive" : "local" }})
-        </option>
-      </select>
-      <div class="row">
-        <button class="btn" type="button" :disabled="loading || !!busy" @click="load">Atualizar</button>
-        <button class="btn btn-primary" type="button" :disabled="!!busy" @click="upload">
-          Enviar arquivo…
-        </button>
-        <select v-model="format" aria-label="Formato da pasta compactada" :disabled="!!busy">
-          <option v-for="f in archiveFormats" :key="f.value" :value="f.value">{{ f.label }}</option>
+  <div v-else class="stack">
+    <div class="toolbar">
+      <span class="select account">
+        <select v-model="accountId" aria-label="Conta" @change="changeAccount">
+          <option v-for="a in store.accounts" :key="a.id" :value="a.id">
+            {{ a.label }} ({{ a.provider === "google_drive" ? "Google Drive" : "pasta local" }})
+          </option>
         </select>
+      </span>
+      <span class="spacer"></span>
+      <button
+        class="btn btn-flat btn-icon"
+        type="button"
+        title="Atualizar"
+        aria-label="Atualizar a lista"
+        :disabled="loading || !!busy"
+        @click="load"
+      >
+        <Icon name="refresh" />
+      </button>
+      <button class="btn" type="button" :disabled="!!busy" @click="upload">
+        <Icon name="upload" :size="16" />
+        Enviar arquivo…
+      </button>
+      <span class="compressed">
         <button
           class="btn"
           type="button"
@@ -193,92 +210,153 @@ async function download(item: RemoteItem) {
           title="Compacta a pasta e envia um único arquivo (arquivos sensíveis ficam de fora)"
           @click="uploadFolder"
         >
+          <Icon name="archive" :size="16" />
           Enviar pasta compactada…
         </button>
-      </div>
+        <span class="select format">
+          <select v-model="format" aria-label="Formato da pasta compactada" :disabled="!!busy">
+            <option v-for="f in archiveFormats" :key="f.value" :value="f.value">{{ f.label }}</option>
+          </select>
+        </span>
+      </span>
     </div>
 
-    <nav class="crumbs" aria-label="Pasta atual">
-      <button class="btn btn-ghost" type="button" @click="open('')">Syncly</button>
-      <template v-for="c in crumbs" :key="c.path">
-        <span class="muted">/</span>
-        <button class="btn btn-ghost" type="button" @click="open(c.path)">{{ c.name }}</button>
-      </template>
-    </nav>
+    <Notice v-if="notice" :kind="notice.kind === 'warning' ? 'warn' : notice.kind" dismissible @close="notice = null">
+      {{ notice.text }}
+    </Notice>
 
-    <div v-if="notice" class="banner" :class="`banner-${notice.kind}`">
-      <span>{{ notice.text }}</span>
-      <button class="btn btn-ghost" type="button" @click="notice = null">Fechar</button>
-    </div>
-    <section v-if="packing" class="run" aria-live="polite">
+    <section v-if="packing" class="boxed pad run" aria-live="polite">
       <div class="run-head">
         <strong>{{ busy }}</strong>
-        <button class="btn btn-ghost" type="button" @click="api.cancelArchive()">Cancelar</button>
+        <button class="btn btn-flat btn-small" type="button" @click="api.cancelArchive()">
+          <Icon name="stop" :size="14" />
+          Cancelar
+        </button>
       </div>
       <div class="progress" role="progressbar">
         <div :style="{ width: `${percent ?? 100}%` }" :class="{ indeterminate: percent === null }"></div>
       </div>
-      <p v-if="progress" class="muted small">
+      <p v-if="progress" class="muted small num">
         {{ formatBytes(progress.bytesDone) }}<template v-if="progress.bytesTotal">
           de {{ formatBytes(progress.bytesTotal) }}</template>
       </p>
-      <p v-if="progress?.current" class="muted small run-current">
-        <code>{{ progress.current }}</code>
-      </p>
+      <p v-if="progress?.current" class="path ellipsis">{{ progress.current }}</p>
     </section>
     <p v-else-if="busy" class="muted">{{ busy }}</p>
 
-    <p v-if="loading" class="muted">Carregando…</p>
-    <p v-else-if="!items.length" class="muted">Pasta vazia. Use "Enviar arquivo…" para começar.</p>
-    <table v-else class="table">
-      <thead>
-        <tr>
-          <th>Nome</th>
-          <th>Tamanho</th>
-          <th>Modificado</th>
-          <th>Por</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="item in items" :key="item.path">
-          <td>
-            <button
-              v-if="item.kind === 'folder'"
-              class="btn btn-ghost folder-link"
-              type="button"
-              @click="open(item.path)"
-            >
-              📁 {{ item.name }}
-            </button>
-            <span v-else>{{ item.name }}</span>
-          </td>
-          <td>{{ item.size != null ? formatBytes(item.size) : "" }}</td>
-          <td>{{ formatDate(item.modifiedAt) }}</td>
-          <td class="muted">{{ item.modifiedBy ?? "" }}</td>
-          <td>
-            <button
-              v-if="item.kind === 'file'"
-              class="btn"
-              type="button"
-              :disabled="!item.downloadable || !!busy"
-              :title="item.downloadable ? '' : 'Documentos nativos do Google não podem ser baixados'"
-              @click="download(item)"
-            >
-              Baixar
-            </button>
-            <button
-              v-if="item.kind === 'file' && item.downloadable && ARCHIVE_NAME.test(item.name)"
-              class="btn"
-              type="button"
-              :disabled="!!busy"
-              @click="downloadExtract(item)"
-            >
-              Baixar e descompactar
-            </button>
-          </td>
-        </tr>
-      </tbody>
-    </table>
-  </section>
+    <div class="boxed">
+      <nav class="crumbs pad-crumbs" aria-label="Pasta atual">
+        <button type="button" @click="open('')">Syncly</button>
+        <template v-for="c in crumbs" :key="c.path">
+          <span class="sep" aria-hidden="true">/</span>
+          <button type="button" @click="open(c.path)">{{ c.name }}</button>
+        </template>
+      </nav>
+
+      <p v-if="loading" class="empty">Carregando…</p>
+      <div v-else-if="!items.length" class="empty">
+        <strong>Pasta vazia</strong>
+        <p>Envie um arquivo ou uma pasta compactada para começar.</p>
+      </div>
+      <div v-else class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Nome</th>
+              <th>Tamanho</th>
+              <th>Modificado</th>
+              <th><span class="visually-hidden">Ações</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="item in items" :key="item.path">
+              <td>
+                <button
+                  v-if="item.kind === 'folder'"
+                  class="link-button"
+                  type="button"
+                  @click="open(item.path)"
+                >
+                  <Icon name="folder" class="muted" />
+                  {{ item.name }}
+                </button>
+                <span v-else class="name"><Icon name="file" class="muted" />{{ item.name }}</span>
+              </td>
+              <td class="muted">{{ item.size != null ? formatBytes(item.size) : "" }}</td>
+              <td :title="formatDate(item.modifiedAt)">
+                {{ formatRelative(item.modifiedAt) }}
+                <div v-if="item.modifiedBy" class="muted small">por {{ item.modifiedBy }}</div>
+              </td>
+              <td class="actions">
+                <template v-if="item.kind === 'file'">
+                  <button
+                    v-if="item.downloadable && ARCHIVE_NAME.test(item.name)"
+                    class="btn btn-flat btn-small"
+                    type="button"
+                    :disabled="!!busy"
+                    @click="downloadExtract(item)"
+                  >
+                    Baixar e descompactar
+                  </button>
+                  <button
+                    class="btn btn-small"
+                    type="button"
+                    :disabled="!item.downloadable || !!busy"
+                    :title="item.downloadable ? 'Baixar' : 'Documentos nativos do Google não podem ser baixados'"
+                    @click="download(item)"
+                  >
+                    <Icon name="download" :size="16" />
+                    Baixar
+                  </button>
+                </template>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
 </template>
+
+<style scoped>
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.account {
+  width: min(100%, 340px);
+}
+
+.compressed {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.format {
+  width: 110px;
+}
+
+.pad-crumbs {
+  padding: 10px 12px;
+}
+
+.name {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.run {
+  display: grid;
+  gap: 8px;
+}
+
+.run-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+</style>

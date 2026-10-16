@@ -66,6 +66,9 @@ chaves de criptografia; integridade dos backups.
 - **SEG-32** — A UI renderiza nomes de arquivos sempre como texto (interpolação do Vue); `v-html` é proibido no projeto.
 - **SEG-33** — Tokens, chaves e caminhos internos do keyring nunca cruzam a fronteira IPC. Erros enviados à UI não incluem detalhes internos.
 - **SEG-34** — Instância única do app (plugin `single-instance`).
+- **SEG-35** — O modo de demonstração da interface (`ui/src/api/mock.ts`, ativado por `?mock`)
+  só existe em desenvolvimento: fica atrás de `import.meta.env.DEV` e não entra no build de
+  produção. A cor de destaque do sistema só é aplicada se for `#rrggbb`.
 
 ### Rede e uso da API
 

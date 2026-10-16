@@ -115,7 +115,7 @@ src-tauri ──► service ──► gdrive ──► core
         ├── api/               # ÚNICO lugar que chama invoke(); tipado
         ├── stores/            # Pinia
         ├── views/             # Visão geral, Tarefas, Contas, Arquivos, Compactar
-        └── components/        # JobCard, JobForm, PlanPreview
+        └── components/        # JobCard, JobForm, PlanPreview, StatusPanel, VersionList, Notice, Icon
 ```
 
 ## 5. Onde ficam os dados
@@ -248,6 +248,12 @@ Planejado: criptografia `age` com manifesto (fase 2e).
   `dialog:allow-ask` (confirmações nativas) e eventos.
   O navegador do login OAuth é aberto pelo Rust, não pela UI.
 - CSP restritiva (`default-src 'self'`, sem `eval`, sem recursos externos).
+- **Tema:** `system_appearance` lê do portal do desktop (`org.freedesktop.appearance`, via
+  `zbus`) o claro/escuro e a cor de destaque; mudanças chegam pelo evento
+  `appearance-changed`. A UI põe `data-theme` e `--system-accent` no `<html>`; sem portal,
+  vale `prefers-color-scheme`. Visual e tokens: `.agents/design.md`.
+- **Modo de demonstração** (`?mock`, só em `pnpm dev`): `ui/src/api/mock.ts` responde no lugar
+  do Rust para revisar o visual no navegador; fica fora do build de produção.
 - Progresso por eventos Tauri: `run-progress` (execução ou restauração de tarefa, com `jobId`) e
   `archive-progress` (compactar/descompactar). Ouvidos só em `ui/src/api/`.
 - Operações longas (execução, compactação) podem ser canceladas: `cancel_run`, `cancel_archive`.
@@ -320,6 +326,7 @@ Planejado: criptografia `age` com manifesto (fase 2e).
 | `zip` só com deflate (Rust puro) + `tar`/`flate2`/`zstd` | Bibliotecas com todos os compressores (bzip2, lzma em C) | Menos código nativo; cobre os formatos comuns. Extração sempre manual, nunca `unpack()` das bibliotecas (SEG-26). |
 | `fs4` para espaço livre | Ignorar espaço em disco | RN-67: bomba de compressão e disco cheio. |
 | Notificações por D-Bus com `zbus` | `notify-rust`; chamar `notify-send` | O `zbus` já vem com o keyring: nenhum crate novo, sem depender de um programa externo instalado. |
+| Visual Orchis seguindo o tema do sistema (portal do desktop) | Tema próprio fixo; biblioteca de componentes | Parece nativo no GNOME, troca de claro/escuro sozinho e funciona igual no celular (`prefers-color-scheme`); CSS próprio pequeno, sem dependência. |
 | Varredura própria (`std::fs`) + `ignore::gitignore` só para padrões | Walker do crate `ignore` | Controle total de exclusões, `.syncignore` e erros — necessário para RN-27/RN-28. |
 | pnpm | npm, yarn | Instalação rápida e `node_modules` estrito (sem dependências fantasmas). |
 | Sem exclusão definitiva | — | Proteção contra bugs e erros humanos (lixeira do Drive guarda 30 dias). |

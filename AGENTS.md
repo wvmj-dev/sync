@@ -37,6 +37,7 @@ Não presuma que algo existe só porque está nos docs — os docs descrevem o p
 | **Receber** (`Delivery::Receive`, `service/src/receive.rs`); avulsos "baixar e descompactar" e "enviar pasta compactada" (`transfers.rs`, `remote get --extract`/`put --compress`) | |
 | **Agendamento** (`core/src/timers.rs` puro, `service/src/schedule.rs`, `os.rs`; `syncly schedule`; modo sem janela `syncly-desktop run <id> --scheduled`) e notificações D-Bus (RN-94) | |
 | **Status** (`sync/status.rs` puro, `service/src/status.rs`; `syncly status`; tela Tarefas → Status; foto do destino no `state.db`) | |
+| **Visual** Orchis seguindo o tema do sistema (claro/escuro e destaque via portal, `src-tauri/src/appearance.rs`); guia em `.agents/design.md`; modo de demonstração `?mock` | |
 
 `docs/REGRAS_DE_NEGOCIO.md` marca como *(planejado)* as seções e regras que ainda não existem.
 
@@ -98,7 +99,8 @@ Violar qualquer uma é bug de segurança, mesmo que o código "funcione".
 4. **Comando Tauri novo** exige as quatro partes: `src-tauri/src/commands.rs`,
    `generate_handler!` em `main.rs`, lista em `src-tauri/build.rs` e permissão em
    `src-tauri/capabilities/default.json` (SEG-30).
-5. **Frontend:** proibido `v-html`; `invoke` só dentro de `ui/src/api/` (SEG-32).
+5. **Frontend:** proibido `v-html`; `invoke` só dentro de `ui/src/api/` (SEG-32). Visual pelos
+   tokens e componentes de `.agents/design.md`.
 6. **`unsafe` proibido** (lint `forbid` no workspace).
 7. **Decisões de sincronização só no planejador** (`crates/core/src/sync/planner.rs`, RN-30).
    O executor apenas aplica o plano. No envio compactado e no recebimento, as decisões ficam em
@@ -135,6 +137,7 @@ Violar qualquer uma é bug de segurança, mesmo que o código "funcione".
 | Arquivo | Quando ler |
 |---|---|
 | `.agents/receitas.md` | Antes de criar comando, regra, provedor, tela ou dependência nova; para testar manualmente; ao fechar uma fase. |
+| `.agents/design.md` | Antes de criar ou mudar qualquer tela: tokens, componentes, regras visuais e como revisar claro/escuro. |
 | `.agents/papeis/revisor-seguranca.md` | Ao revisar qualquer mudança em `src-tauri/`, `crates/gdrive/`, providers, I/O ou dependências. |
 | `.agents/papeis/guardiao-regras.md` | Quando uma mudança altera comportamento descrito em `docs/`. |
 | `.agents/papeis/sincroniza-tipos.md` | Quando mexer em DTOs, comandos Tauri ou `ui/src/api/`. |

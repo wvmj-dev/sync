@@ -8,6 +8,7 @@
     "dialog:allow-open",
     "dialog:allow-ask",
     "allow-app-info",
+    "allow-system-appearance",
     "allow-list-accounts",
     "allow-add-local-account",
     "allow-remove-account",

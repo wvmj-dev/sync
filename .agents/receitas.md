@@ -48,7 +48,10 @@ Passo a passo das mudanças mais comuns. Siga a ordem: ela evita esquecer uma da
 2. Rota em `ui/src/router.ts` e link em `ui/src/App.vue`.
 3. Dados via `useAppStore()` ou `api.*` — nunca `invoke` direto.
 4. Texto sempre por interpolação (`{{ }}`); `v-html` é proibido (SEG-32).
-5. Cores e espaçamentos pelos tokens de `ui/src/styles/main.css` (tema claro/escuro).
+5. Siga `.agents/design.md`: tokens e componentes de `ui/src/styles/main.css`, nunca cores
+   ou raios soltos.
+6. Comando novo usado pela tela? Simule-o em `ui/src/api/mock.ts` e revise claro e escuro
+   (`?mock&theme=dark`, `node scripts/ui-shots.mjs`).
 
 ## 5. Testar manualmente sem tocar nos seus dados
 

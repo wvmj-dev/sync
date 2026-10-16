@@ -14,6 +14,7 @@ import type {
   Weekday,
 } from "../api/types";
 import { archiveFormats, everyHours, weekdays } from "../utils/format";
+import Icon from "./Icon.vue";
 
 const props = defineProps<{ job: JobSummary | null; accounts: AccountSummary[] }>();
 const emit = defineEmits<{ save: [draft: JobDraft]; cancel: [] }>();
@@ -141,197 +142,336 @@ function submit() {
 </script>
 
 <template>
-  <form class="card form" @submit.prevent="submit">
-    <h2>{{ job ? "Editar tarefa" : "Nova tarefa" }}</h2>
+  <form class="job-form boxed" @submit.prevent="submit">
+    <header class="form-head">
+      <h2>{{ job ? `Editar "${job.name}"` : "Nova tarefa" }}</h2>
+      <button
+        class="btn btn-flat btn-icon"
+        type="button"
+        aria-label="Fechar sem salvar"
+        @click="emit('cancel')"
+      >
+        <Icon name="close" />
+      </button>
+    </header>
 
-    <label class="field">
-      <span>Nome</span>
-      <input v-model="form.name" maxlength="64" placeholder="Ex.: Documentos" required />
-    </label>
-
-    <fieldset class="field">
-      <legend>O que a tarefa faz</legend>
-      <label class="choice">
-        <input v-model="form.delivery" type="radio" value="files" />
-        <span>
-          <strong>Enviar arquivo por arquivo</strong> — o destino fica igual às pastas; da segunda
-          vez em diante, só vai o que mudou.
-        </span>
-      </label>
-      <label class="choice">
-        <input v-model="form.delivery" type="radio" value="archive" />
-        <span>
-          <strong>Enviar compactado</strong> — tudo vira um único arquivo com data no nome
-          (ex.: <code>{{ form.name || "Tarefa" }}_2026-10-14_02-00-05.zip</code>), mantendo versões
-          anteriores. Bom para backup de pastas com muitos arquivos pequenos.
-        </span>
-      </label>
-      <label class="choice">
-        <input v-model="form.delivery" type="radio" value="receive" />
-        <span>
-          <strong>Receber e descompactar</strong> — baixa a versão mais recente de uma pasta do
-          destino (enviada pelo Syncly, deste ou de outro computador) e a descompacta numa
-          <strong>pasta nova</strong> aqui. Nada existente é substituído.
-        </span>
-      </label>
-    </fieldset>
-
-    <div v-if="!receiving" class="field">
-      <span>Fontes (pastas e arquivos)</span>
-      <ul v-if="form.sources.length" class="list compact">
-        <li v-for="(src, i) in form.sources" :key="src" class="list-row">
-          <code>{{ src }}</code>
-          <button class="btn btn-ghost" type="button" @click="form.sources.splice(i, 1)">
-            Remover
-          </button>
-        </li>
-      </ul>
-      <div class="row">
-        <button class="btn" type="button" @click="addFolder">+ Pasta</button>
-        <button class="btn" type="button" @click="addFiles">+ Arquivos</button>
+    <div class="form form-body">
+      <div class="fields">
+        <label class="field">
+          <span class="label">Nome</span>
+          <input v-model="form.name" maxlength="64" placeholder="Ex.: Documentos" required />
+        </label>
+        <label class="field switch-field">
+          <span class="label">Tarefa ativa</span>
+          <input v-model="form.enabled" class="switch" type="checkbox" role="switch" />
+        </label>
       </div>
-    </div>
 
-    <div class="grid-2">
-      <label class="field">
-        <span>{{ receiving ? "Conta de origem" : "Conta de destino" }}</span>
-        <select v-model="form.accountId" required>
-          <option v-if="!usableAccounts.length" value="" disabled>Nenhuma conta disponível</option>
-          <option v-for="a in usableAccounts" :key="a.id" :value="a.id">{{ a.label }}</option>
-        </select>
-        <small v-if="!usableAccounts.length" class="muted">
-          Conecte o Google Drive ou adicione uma pasta em <RouterLink to="/contas">Contas</RouterLink>.
-        </small>
-      </label>
-      <label class="field">
-        <span>{{ receiving ? "Pasta no destino (onde estão as versões)" : "Pasta no destino" }}</span>
-        <input v-model="form.path" placeholder="Ex.: Backup/Documentos" required />
-      </label>
-    </div>
+      <fieldset class="group">
+        <legend>O que a tarefa faz</legend>
+        <div class="boxed">
+          <label class="option">
+            <input v-model="form.delivery" type="radio" value="files" />
+            <span class="option-main">
+              <span class="option-title">Enviar arquivo por arquivo</span>
+              <span class="option-desc">
+                O destino fica igual às pastas; da segunda vez em diante, só vai o que mudou.
+              </span>
+            </span>
+          </label>
+          <label class="option">
+            <input v-model="form.delivery" type="radio" value="archive" />
+            <span class="option-main">
+              <span class="option-title">Enviar compactado</span>
+              <span class="option-desc">
+                Tudo vira um arquivo com data no nome, guardando versões anteriores. Bom para
+                pastas com muitos arquivos pequenos.
+              </span>
+            </span>
+          </label>
+          <label class="option">
+            <input v-model="form.delivery" type="radio" value="receive" />
+            <span class="option-main">
+              <span class="option-title">Receber e descompactar</span>
+              <span class="option-desc">
+                Baixa a versão mais recente de uma pasta do destino e a descompacta numa pasta
+                nova aqui. Nada existente é substituído.
+              </span>
+            </span>
+          </label>
+        </div>
+      </fieldset>
 
-    <div v-if="receiving" class="field">
-      <span>Pasta no computador</span>
-      <div class="row">
-        <button class="btn" type="button" @click="chooseTarget">Escolher pasta…</button>
-        <code v-if="form.target">{{ form.target }}</code>
-        <span v-else class="muted small">nenhuma pasta escolhida</span>
+      <div v-if="!receiving" class="group">
+        <span class="group-title">Fontes</span>
+        <div class="boxed">
+          <div v-for="(src, i) in form.sources" :key="src" class="item source">
+            <Icon class="item-icon" name="folder" />
+            <span class="item-main path">{{ src }}</span>
+            <button
+              class="btn btn-flat btn-small btn-icon"
+              type="button"
+              :aria-label="`Remover ${src}`"
+              @click="form.sources.splice(i, 1)"
+            >
+              <Icon name="close" :size="16" />
+            </button>
+          </div>
+          <div class="item source-actions">
+            <span v-if="!form.sources.length" class="item-main muted small">
+              Escolha as pastas e os arquivos que vão para o destino.
+            </span>
+            <span v-else class="item-main"></span>
+            <button class="btn btn-small" type="button" @click="addFolder">
+              <Icon name="plus" :size="16" />
+              Pasta
+            </button>
+            <button class="btn btn-small" type="button" @click="addFiles">
+              <Icon name="plus" :size="16" />
+              Arquivos
+            </button>
+          </div>
+        </div>
       </div>
-      <small class="muted">
-        Cada versão recebida vira uma pasta nova aqui dentro, com o nome da versão. Se a mais
-        recente já foi recebida, nada é feito.
-      </small>
-    </div>
 
-    <template v-if="form.delivery === 'archive'">
-      <label class="field">
-        <span>Formato</span>
-        <select v-model="form.format">
-          <option v-for="f in archiveFormats" :key="f.value" :value="f.value">
-            {{ f.label }} — {{ f.hint }}
-          </option>
-        </select>
-      </label>
-      <fieldset class="field">
-        <legend>Versões mantidas no destino</legend>
-        <div class="grid-4">
+      <div class="group">
+        <span class="group-title">{{ receiving ? "De onde receber" : "Destino" }}</span>
+        <div class="fields">
           <label class="field">
-            <span>Últimas</span>
+            <span class="label">{{ receiving ? "Conta de origem" : "Conta" }}</span>
+            <span class="select">
+              <select v-model="form.accountId" required>
+                <option v-if="!usableAccounts.length" value="" disabled>
+                  Nenhuma conta disponível
+                </option>
+                <option v-for="a in usableAccounts" :key="a.id" :value="a.id">{{ a.label }}</option>
+              </select>
+            </span>
+            <span v-if="!usableAccounts.length" class="hint">
+              Conecte o Google Drive ou adicione uma pasta em
+              <RouterLink to="/contas">Contas</RouterLink>.
+            </span>
+          </label>
+          <label class="field">
+            <span class="label">{{ receiving ? "Pasta onde estão as versões" : "Pasta no destino" }}</span>
+            <input v-model="form.path" placeholder="Ex.: Backup/Documentos" required />
+          </label>
+        </div>
+        <div v-if="receiving" class="field">
+          <span class="label">Pasta no computador</span>
+          <div class="row">
+            <button class="btn btn-small" type="button" @click="chooseTarget">
+              <Icon name="folder" :size="16" />
+              Escolher pasta…
+            </button>
+            <span v-if="form.target" class="path">{{ form.target }}</span>
+            <span v-else class="hint">Nenhuma pasta escolhida.</span>
+          </div>
+          <span class="hint">
+            Cada versão recebida vira uma pasta nova aqui dentro, com o nome da versão.
+          </span>
+        </div>
+      </div>
+
+      <div v-if="form.delivery === 'archive'" class="group">
+        <span class="group-title">Versões</span>
+        <div class="fields">
+          <label class="field">
+            <span class="label">Formato</span>
+            <span class="select">
+              <select v-model="form.format">
+                <option v-for="f in archiveFormats" :key="f.value" :value="f.value">
+                  {{ f.label }}: {{ f.hint }}
+                </option>
+              </select>
+            </span>
+          </label>
+        </div>
+        <div class="fields retention">
+          <label class="field">
+            <span class="label">Últimas</span>
             <input v-model.number="form.retention.keep_last" type="number" min="1" max="1000" />
           </label>
           <label class="field">
-            <span>Diárias</span>
+            <span class="label">Diárias</span>
             <input v-model.number="form.retention.daily" type="number" min="0" max="1000" />
           </label>
           <label class="field">
-            <span>Semanais</span>
+            <span class="label">Semanais</span>
             <input v-model.number="form.retention.weekly" type="number" min="0" max="1000" />
           </label>
           <label class="field">
-            <span>Mensais</span>
+            <span class="label">Mensais</span>
             <input v-model.number="form.retention.monthly" type="number" min="0" max="1000" />
           </label>
         </div>
-        <small class="muted">
-          As que passarem disso vão para a <em>lixeira</em> do destino (recuperáveis), só depois que
-          a versão nova for enviada e conferida. Se nada mudou, nada é enviado.
-        </small>
-        <small v-if="!retentionValid" class="error">Mantenha ao menos a última versão.</small>
-      </fieldset>
-    </template>
-
-    <fieldset v-else-if="form.delivery === 'files'" class="field">
-      <legend>Modo</legend>
-      <label class="choice">
-        <input v-model="form.mode" type="radio" value="upload" />
-        <span><strong>Envio</strong> (recomendado) — envia novos e alterados; nunca apaga nada no destino.</span>
-      </label>
-      <label class="choice">
-        <input v-model="form.mode" type="radio" value="mirror" />
-        <span>
-          <strong>Espelho</strong> — o que você apagar aqui vai para a <em>lixeira</em> do destino,
-          com proteção contra exclusões em massa.
+        <span v-if="!retentionValid" class="error-text">Mantenha pelo menos a última versão.</span>
+        <span v-else class="hint">
+          As que passarem disso vão para a lixeira do destino, só depois que a versão nova for
+          enviada e conferida. Se nada mudou, nada é enviado.
         </span>
-      </label>
-    </fieldset>
-
-    <template v-if="!receiving">
-      <label class="field">
-        <span>Exclusões (uma por linha, sintaxe do .gitignore)</span>
-        <textarea v-model="form.exclude" rows="3" placeholder="node_modules/&#10;*.iso" />
-      </label>
-
-      <label class="choice">
-        <input v-model="form.includeSensitive" type="checkbox" />
-        <span>
-          Incluir arquivos sensíveis (<code>.ssh</code>, <code>.env</code>, chaves…).
-          <strong>Não recomendado.</strong>
-        </span>
-      </label>
-    </template>
-
-    <fieldset class="field">
-      <legend>Agendamento</legend>
-      <div class="row">
-        <select v-model="form.scheduleKind" aria-label="Quando executar">
-          <option value="manual">Só quando eu clicar em Executar</option>
-          <option value="every_hours">A cada…</option>
-          <option value="daily">Todo dia</option>
-          <option value="weekly">Toda semana</option>
-          <option value="calendar">Personalizado (systemd)</option>
-        </select>
-        <select v-if="form.scheduleKind === 'every_hours'" v-model.number="form.hours" aria-label="Intervalo">
-          <option v-for="h in everyHours" :key="h" :value="h">{{ h === 1 ? "1 hora" : `${h} horas` }}</option>
-        </select>
-        <select v-if="form.scheduleKind === 'weekly'" v-model="form.weekday" aria-label="Dia da semana">
-          <option v-for="d in weekdays" :key="d.value" :value="d.value">{{ d.label }}</option>
-        </select>
-        <template v-if="form.scheduleKind === 'daily' || form.scheduleKind === 'weekly'">
-          <span>às</span>
-          <input v-model="form.at" type="time" aria-label="Horário" required />
-        </template>
-        <input
-          v-if="form.scheduleKind === 'calendar'"
-          v-model="form.expr"
-          maxlength="64"
-          placeholder="Ex.: Mon..Fri *-*-* 18:30:00"
-          aria-label="Expressão OnCalendar"
-        />
       </div>
-      <small v-if="form.scheduleKind !== 'manual'" class="muted">
-        Roda sozinho pelo systemd, mesmo com o app fechado; se o computador estiver desligado no
-        horário, roda ao ligar. Só começa depois da <strong>primeira execução manual</strong>
-        bem-sucedida, e nunca confirma nada sozinho — se precisar, avisa por notificação.
-      </small>
-    </fieldset>
 
-    <label class="choice">
-      <input v-model="form.enabled" type="checkbox" />
-      <span>Tarefa ativa</span>
-    </label>
+      <fieldset v-if="form.delivery === 'files'" class="group">
+        <legend>Modo</legend>
+        <div class="boxed">
+          <label class="option">
+            <input v-model="form.mode" type="radio" value="upload" />
+            <span class="option-main">
+              <span class="option-title">Envio (recomendado)</span>
+              <span class="option-desc">Envia novos e alterados; nunca apaga nada no destino.</span>
+            </span>
+          </label>
+          <label class="option">
+            <input v-model="form.mode" type="radio" value="mirror" />
+            <span class="option-main">
+              <span class="option-title">Espelho</span>
+              <span class="option-desc">
+                O que você apagar aqui vai para a lixeira do destino, com proteção contra
+                exclusões em massa.
+              </span>
+            </span>
+          </label>
+        </div>
+      </fieldset>
 
-    <div class="row end">
-      <button class="btn btn-ghost" type="button" @click="emit('cancel')">Cancelar</button>
-      <button class="btn btn-primary" type="submit" :disabled="!canSave">Salvar</button>
+      <div class="group">
+        <span class="group-title">Agendamento</span>
+        <div class="row schedule">
+          <span class="select">
+            <select v-model="form.scheduleKind" aria-label="Quando executar">
+              <option value="manual">Só quando eu clicar em Executar</option>
+              <option value="every_hours">A cada…</option>
+              <option value="daily">Todo dia</option>
+              <option value="weekly">Toda semana</option>
+              <option value="calendar">Personalizado (expressão do systemd)</option>
+            </select>
+          </span>
+          <span v-if="form.scheduleKind === 'every_hours'" class="select">
+            <select v-model.number="form.hours" aria-label="Intervalo">
+              <option v-for="h in everyHours" :key="h" :value="h">
+                {{ h === 1 ? "1 hora" : `${h} horas` }}
+              </option>
+            </select>
+          </span>
+          <span v-if="form.scheduleKind === 'weekly'" class="select">
+            <select v-model="form.weekday" aria-label="Dia da semana">
+              <option v-for="d in weekdays" :key="d.value" :value="d.value">{{ d.label }}</option>
+            </select>
+          </span>
+          <template v-if="form.scheduleKind === 'daily' || form.scheduleKind === 'weekly'">
+            <span class="muted">às</span>
+            <input v-model="form.at" class="time" type="time" aria-label="Horário" required />
+          </template>
+          <input
+            v-if="form.scheduleKind === 'calendar'"
+            v-model="form.expr"
+            class="expr"
+            maxlength="64"
+            placeholder="Ex.: Mon..Fri *-*-* 18:30:00"
+            aria-label="Expressão OnCalendar"
+          />
+        </div>
+        <span v-if="form.scheduleKind !== 'manual'" class="hint">
+          Roda sozinho pelo systemd, mesmo com o app fechado; se o computador estiver desligado no
+          horário, roda ao ligar. Começa depois da primeira execução manual bem-sucedida e nunca
+          confirma nada sozinho: se precisar, avisa por notificação.
+        </span>
+      </div>
+
+      <div v-if="!receiving" class="group">
+        <span class="group-title">Avançado</span>
+        <label class="field">
+          <span class="label">Exclusões (uma por linha, como no .gitignore)</span>
+          <textarea v-model="form.exclude" rows="3" placeholder="node_modules/&#10;*.iso" />
+        </label>
+        <label class="field switch-field">
+          <span>
+            <span class="label">Incluir arquivos sensíveis</span>
+            <span class="hint">
+              <code>.ssh</code>, <code>.env</code>, chaves e afins. Não recomendado.
+            </span>
+          </span>
+          <input v-model="form.includeSensitive" class="switch" type="checkbox" role="switch" />
+        </label>
+      </div>
     </div>
+
+    <footer class="form-foot">
+      <button class="btn btn-flat" type="button" @click="emit('cancel')">Cancelar</button>
+      <button class="btn btn-primary" type="submit" :disabled="!canSave">
+        {{ job ? "Salvar alterações" : "Criar tarefa" }}
+      </button>
+    </footer>
   </form>
 </template>
+
+<style scoped>
+.form-head,
+.form-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+}
+
+.form-foot {
+  justify-content: flex-end;
+}
+
+.boxed > .form-body {
+  border-top: 0;
+}
+
+.form-body {
+  padding: 4px 18px 22px;
+}
+
+.switch-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 4px;
+}
+
+.switch-field > span {
+  display: grid;
+  gap: 2px;
+}
+
+.source {
+  min-height: 48px;
+  padding: 8px 10px 8px 18px;
+}
+
+.source-actions {
+  min-height: 52px;
+  padding: 8px 10px 8px 18px;
+}
+
+.retention {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.schedule .select {
+  min-width: 180px;
+}
+
+.schedule .time {
+  width: 120px;
+}
+
+.schedule .expr {
+  flex: 1;
+  min-width: 220px;
+  font-family: var(--mono);
+}
+
+@media (max-width: 760px) {
+  .retention {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+</style>

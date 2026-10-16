@@ -2,6 +2,7 @@
 // liberado em capabilities/default.json. Comando fora da lista = bloqueado.
 const COMMANDS: &[&str] = &[
     "app_info",
+    "system_appearance",
     "list_accounts",
     "add_local_account",
     "remove_account",

@@ -4455,6 +4455,7 @@ dependencies = [
 name = "syncly-desktop"
 version = "0.1.0"
 dependencies = [
+ "futures-util",
  "serde",
  "syncly-service",
  "tauri",
@@ -4463,6 +4464,7 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tracing",
  "uuid",
+ "zbus",
 ]
 
 [[package]]

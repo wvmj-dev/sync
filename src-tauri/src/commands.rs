@@ -49,6 +49,13 @@ pub async fn app_info(service: State<'_, Service>) -> ApiResult<AppInfo> {
     Ok(service.app_info())
 }
 
+/// Tema do sistema (claro/escuro, cor de destaque). Mudanças chegam pelo evento
+/// `appearance-changed`.
+#[tauri::command]
+pub async fn system_appearance() -> ApiResult<crate::appearance::Appearance> {
+    Ok(crate::appearance::current().await)
+}
+
 #[tauri::command]
 pub async fn list_accounts(service: State<'_, Service>) -> ApiResult<Vec<AccountSummary>> {
     Ok(service.list_accounts()?)
