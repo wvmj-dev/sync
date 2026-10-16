@@ -8,6 +8,7 @@
 pub mod archive;
 pub mod backup;
 pub mod config;
+pub mod crypto;
 pub mod domain;
 pub mod error;
 pub mod filters;
