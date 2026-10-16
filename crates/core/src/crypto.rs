@@ -137,10 +137,7 @@ pub fn encrypt_writer<W: Write>(
 
 /// Decifra com a primeira chave que servir. Conteúdo adulterado vira erro de leitura
 /// mais adiante (cada bloco é autenticado) — nunca dado errado em silêncio.
-pub fn decrypt_reader<R: Read>(
-    keys: &[SecretKey],
-    input: R,
-) -> Result<age::stream::StreamReader<R>, String> {
+pub fn decrypt_reader<R: Read>(keys: &[SecretKey], input: R) -> Result<Plain<R>, String> {
     let decryptor = age::Decryptor::new(input).map_err(|e| match e {
         age::DecryptError::Io(e) => format!("não foi possível ler o arquivo: {e}"),
         _ => "o arquivo não é uma versão criptografada válida".to_string(),
@@ -149,10 +146,30 @@ pub fn decrypt_reader<R: Read>(
         return Err(no_key());
     }
     let identities = keys.iter().map(|k| &k.0 as &dyn age::Identity);
-    decryptor.decrypt(identities).map_err(|e| match e {
-        age::DecryptError::NoMatchingKeys => no_key(),
-        _ => "o arquivo criptografado está corrompido ou foi alterado".to_string(),
-    })
+    decryptor
+        .decrypt(identities)
+        .map(Plain)
+        .map_err(|e| match e {
+            age::DecryptError::NoMatchingKeys => no_key(),
+            _ => TAMPERED.to_string(),
+        })
+}
+
+const TAMPERED: &str = "o arquivo criptografado está corrompido ou foi alterado";
+
+/// O conteúdo decifrado. Um bloco que não confere vira um erro de leitura com mensagem
+/// em português — nunca dado errado em silêncio.
+pub struct Plain<R: Read>(age::stream::StreamReader<R>);
+
+impl<R: Read> Read for Plain<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.0.read(buf).map_err(|e| match e.kind() {
+            io::ErrorKind::InvalidData | io::ErrorKind::UnexpectedEof => {
+                io::Error::new(e.kind(), TAMPERED)
+            }
+            _ => e,
+        })
+    }
 }
 
 fn no_key() -> String {
@@ -221,6 +238,23 @@ mod tests {
         assert!(err.contains("importe a chave"), "{err}");
         assert!(decrypt_reader(&[], sealed.as_slice()).is_err());
         assert!(decrypt_reader(&[SecretKey::generate()], &b"texto comum"[..]).is_err());
+    }
+
+    #[test]
+    fn conteudo_adulterado_nunca_passa() {
+        let key = SecretKey::generate();
+        let mut sealed = Vec::new();
+        let mut w = encrypt_writer(&key.public(), &mut sealed).unwrap();
+        w.write_all(&[7u8; 100_000]).unwrap();
+        w.finish().unwrap();
+        let last = sealed.len() - 10;
+        sealed[last] ^= 1;
+        let mut plain = Vec::new();
+        let err = decrypt_reader(&[key], sealed.as_slice())
+            .unwrap()
+            .read_to_end(&mut plain)
+            .unwrap_err();
+        assert_eq!(err.to_string(), TAMPERED);
     }
 
     #[test]

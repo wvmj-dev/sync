@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, reactive } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import { RouterLink } from "vue-router";
-import { pickFiles, pickFolder } from "../api";
+import { api, pickFiles, pickFolder } from "../api";
 import type {
   AccountSummary,
   ArchiveFormat,
@@ -38,6 +38,8 @@ const form = reactive({
   delivery: (delivery?.kind ?? "files") as Delivery["kind"],
   format: (archived?.format ?? "zip") as ArchiveFormat,
   retention: { ...(archived?.retention ?? DEFAULT_RETENTION) },
+  /** RN-70: só com a chave ativa e em TAR.ZST (RN-63). */
+  encrypt: archived?.encrypt ?? false,
   /** RN-107: pasta do computador onde as versões recebidas são descompactadas. */
   target: delivery?.kind === "receive" ? delivery.target : "",
   scheduleKind: schedule.kind as Schedule["kind"],
@@ -48,6 +50,29 @@ const form = reactive({
 });
 
 const receiving = computed(() => form.delivery === "receive");
+
+/** RN-72: a criptografia só pode ser ligada com uma chave ativa. */
+const keyActive = ref(false);
+onMounted(async () => {
+  try {
+    keyActive.value = (await api.encryptionStatus()).active !== null;
+  } catch {
+    keyActive.value = false;
+  }
+});
+// RN-63: criptografar exige TAR.ZST — um puxa o outro.
+watch(
+  () => form.encrypt,
+  (on) => {
+    if (on) form.format = "tar_zst";
+  },
+);
+watch(
+  () => form.format,
+  (format) => {
+    if (format !== "tar_zst") form.encrypt = false;
+  },
+);
 
 const usableAccounts = computed(() => props.accounts);
 const scheduleValid = computed(() => {
@@ -74,6 +99,7 @@ const canSave = computed(
     form.path.trim() &&
     (receiving.value ? !!form.target : form.sources.length > 0) &&
     (form.delivery !== "archive" || retentionValid.value) &&
+    (form.delivery !== "archive" || !form.encrypt || keyActive.value) &&
     scheduleValid.value,
 );
 
@@ -113,7 +139,12 @@ function scheduleDraft(): Schedule {
 function deliveryDraft(): Delivery {
   switch (form.delivery) {
     case "archive":
-      return { kind: "archive", format: form.format, retention: { ...form.retention } };
+      return {
+        kind: "archive",
+        format: form.format,
+        retention: { ...form.retention },
+        encrypt: form.encrypt,
+      };
     case "receive":
       return { kind: "receive", target: form.target };
     default:
@@ -287,6 +318,24 @@ function submit() {
             </span>
           </label>
         </div>
+        <label class="field switch-field">
+          <span>
+            <span class="label">Criptografar as versões</span>
+            <span v-if="keyActive" class="hint">
+              Só em TAR.ZST. Para abrir uma versão é preciso a chave de recuperação.
+            </span>
+            <span v-else class="hint">
+              Crie a chave antes em <RouterLink to="/preferencias">Preferências → Criptografia</RouterLink>.
+            </span>
+          </span>
+          <input
+            v-model="form.encrypt"
+            class="switch"
+            type="checkbox"
+            role="switch"
+            :disabled="!keyActive && !form.encrypt"
+          />
+        </label>
         <div class="fields retention">
           <label class="field">
             <span class="label">Últimas</span>

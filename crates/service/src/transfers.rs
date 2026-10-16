@@ -8,7 +8,7 @@ use std::sync::atomic::Ordering;
 use std::time::Instant;
 
 use syncly_core::CoreError;
-use syncly_core::archive::{self, ArchiveFormat, ArchiveProgress, CreateRequest};
+use syncly_core::archive::{self, ArchiveProgress, CreateRequest};
 use syncly_core::domain::rel_path::{join_str, validate_name};
 use syncly_core::domain::{EntryKind, RelPath};
 use syncly_core::filters::Filter;
@@ -18,7 +18,7 @@ use syncly_core::sync::remote_tree::resolve_path;
 use uuid::Uuid;
 
 use crate::archive::{
-    ExtractResult, Slot, absolute_dir, archive_stem, blocking, check_inputs, ensure_space,
+    ArchiveName, ExtractResult, Slot, absolute_dir, blocking, check_inputs, ensure_space,
     extract_new_folder, total_size,
 };
 use crate::delivery::{TMP_PREFIX, TempFile};
@@ -219,8 +219,7 @@ impl Service {
             .ok_or_else(|| ServiceError::Invalid("informe o caminho de um arquivo".into()))?
             .to_string();
         // Formato desconhecido falha antes de qualquer acesso à rede.
-        let stem = archive_stem(&name)?;
-        let format = ArchiveFormat::detect(&name).map_or(ArchiveFormat::Zip, |(f, _)| f);
+        let archive_name = ArchiveName::parse(&name, "extraido")?;
         let parent = RelPath::parse(syncly_core::domain::rel_path::parent_str(path.as_str()))
             .map_err(ServiceError::Invalid)?;
 
@@ -234,10 +233,11 @@ impl Service {
         let (_slot, cancel) = Slot::take(&self.archive_op)?;
         let staging = self.staging_dir(STAGING)?;
         ensure_space(&staging, entry.size.unwrap_or(0), "o disco do computador")?;
+        // O temporário mantém a extensão completa (`.age` diz que é preciso decifrar).
         let temp = TempFile(staging.join(format!(
             "{TMP_PREFIX}{}.{}",
             Uuid::new_v4(),
-            format.extension()
+            archive_name.extension()
         )));
         progress(&ArchiveProgress {
             bytes_total: entry.size.unwrap_or(0),
@@ -252,8 +252,16 @@ impl Service {
         if cancel.load(Ordering::Relaxed) {
             return Err(CoreError::Cancelled.into());
         }
-        let report =
-            extract_new_folder(temp.0.clone(), &local_dir, &stem, cancel, progress).await?;
+        let keys = self.keys_for(&name).await?;
+        let report = extract_new_folder(
+            temp.0.clone(),
+            &local_dir,
+            &archive_name.stem,
+            keys,
+            cancel,
+            progress,
+        )
+        .await?;
         tracing::info!(account = %account_id, "arquivo baixado e descompactado");
         Ok(ExtractResult::from_report(report, started))
     }
@@ -296,6 +304,7 @@ impl Service {
                 output: &output,
                 format,
                 level: None,
+                encrypt: None,
                 cancel: &flag,
                 progress: &*report,
             })
@@ -403,6 +412,7 @@ mod tests {
     use crate::secrets::account_key;
     use crate::test_support::{GOOGLE_CLIENT_JSON, service};
     use serde_json::json;
+    use syncly_core::archive::ArchiveFormat;
     use syncly_core::domain::{Account, AccountKind};
     use wiremock::matchers::{method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};

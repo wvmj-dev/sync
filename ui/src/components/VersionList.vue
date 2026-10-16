@@ -11,9 +11,13 @@ const emit = defineEmits<{ restore: [version: VersionItem] }>();
   <div class="versions">
     <div v-if="versions.length" class="boxed">
       <div v-for="v in versions" :key="v.id" class="item">
-        <Icon class="item-icon" name="archive" :size="20" />
+        <Icon class="item-icon" :name="v.keyFingerprint ? 'lock' : 'archive'" :size="20" />
         <div class="item-main">
-          <div class="item-title path ellipsis">{{ v.name }}</div>
+          <div class="item-title">
+            <span class="path ellipsis">{{ v.name }}</span>
+            <!-- RN-74: qual chave abre esta versão. -->
+            <span v-if="v.keyFingerprint" class="chip" :title="`Chave ${v.keyFingerprint}`">Criptografada</span>
+          </div>
           <div class="item-sub" :title="formatDate(v.createdAt)">
             Enviada {{ formatRelative(v.createdAt) }}, {{ formatBytes(v.size) }}, em
             {{ v.accountLabel ?? "conta removida" }}
@@ -46,7 +50,15 @@ const emit = defineEmits<{ restore: [version: VersionItem] }>();
   gap: 12px;
 }
 
-.versions .item-title.path {
+.versions .item-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.versions .item-title .path {
+  min-width: 0;
   color: var(--fg);
   font-weight: 500;
 }

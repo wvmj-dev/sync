@@ -5,6 +5,7 @@ mod archive;
 mod auth_watch;
 mod delivery;
 pub mod dto;
+mod encryption;
 mod error;
 mod google;
 pub mod logging;

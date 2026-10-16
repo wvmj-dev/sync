@@ -38,6 +38,10 @@ const shots = [
   { name: "19-adiada-visao-geral-claro", theme: "light", route: "/", query: "&postponed" },
   { name: "20-nova-pasta-claro", theme: "light", route: "/arquivos", click: ["Nova pasta"] },
   { name: "21-nova-pasta-celular-escuro", theme: "dark", route: "/arquivos", click: ["Nova pasta"], width: 390, height: 844 },
+  { name: "22-criptografia-sem-chave-claro", theme: "light", route: "/preferencias", height: 1250 },
+  { name: "23-criptografia-ativa-escuro", theme: "dark", route: "/preferencias", query: "&encrypted", height: 1250 },
+  { name: "24-versoes-criptografadas-claro", theme: "light", route: "/tarefas", query: "&encrypted", click: ["Versões"] },
+  { name: "25-compactar-criptografia-escuro", theme: "dark", route: "/compactar", query: "&encrypted", height: 1000 },
 ];
 
 const profile = mkdtempSync(join(tmpdir(), "syncly-shots-"));

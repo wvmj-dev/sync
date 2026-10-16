@@ -7,10 +7,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use syncly_core::CoreError;
-use syncly_core::archive::{
-    self, ArchiveFormat, DISK_RESERVE_BYTES, ExtractReport, ExtractRequest,
-};
-use syncly_core::domain::rel_path::validate_name;
+use syncly_core::archive::{self, DISK_RESERVE_BYTES, ExtractReport, ExtractRequest};
+use syncly_core::crypto::SecretKey;
 use syncly_core::domain::{RunKind, RunStatus, RunTrigger};
 use syncly_core::fsutil::unique_path;
 use syncly_core::hash::hash_file;
@@ -19,7 +17,7 @@ use syncly_core::provider::StorageProvider;
 use syncly_core::sync::executor::Progress;
 use uuid::Uuid;
 
-use crate::archive::{ExtractResult, ensure_space};
+use crate::archive::{ArchiveName, ExtractResult, ensure_space};
 use crate::delivery::{TMP_PREFIX, TempFile, failed, is_intact, with_progress};
 use crate::dto::VersionItem;
 use crate::error::{ServiceError, ServiceResult};
@@ -41,6 +39,7 @@ impl Service {
                 created_at: v.created_at,
                 account_id: v.account_id,
                 path: v.dest_path,
+                key_fingerprint: v.key_fingerprint,
             })
             .collect())
     }
@@ -99,17 +98,9 @@ impl Service {
             .account(version.account_id)
             .cloned()
             .ok_or(ServiceError::NotFound("conta da versão"))?;
-        let Some((format, stem)) = ArchiveFormat::detect(&version.name) else {
-            return Err(ServiceError::Invalid(format!(
-                "'{}' não tem um formato conhecido",
-                version.name
-            )));
-        };
-        let stem = if validate_name(stem).is_ok() {
-            stem.to_string()
-        } else {
-            "restauracao".to_string()
-        };
+        let name = ArchiveName::parse(&version.name, "restauracao")?;
+        // RN-73: a chave privada só é lida aqui, se a versão for criptografada.
+        let keys = self.keys_for(&version.name).await?;
 
         let provider = self.provider_for(&account).await?;
         // RN-55: só a versão que o app enviou, do jeito que ele enviou.
@@ -127,8 +118,8 @@ impl Service {
         tracing::info!(job = %job_id, "restauração iniciada");
         let target = Target {
             dir: dest_dir,
-            stem: &stem,
-            format,
+            stem: &name.stem,
+            extension: name.extension(),
         };
         let file = RemoteFile {
             id: &version.remote_id,
@@ -142,6 +133,7 @@ impl Service {
             &file,
             &staging,
             &target,
+            keys,
             &cancel,
             &progress,
         )
@@ -171,7 +163,8 @@ impl Service {
 pub(crate) struct Target<'a> {
     pub dir: &'a Path,
     pub stem: &'a str,
-    pub format: ArchiveFormat,
+    /// Extensão completa do arquivo (`tar.zst.age` se criptografado).
+    pub extension: String,
 }
 
 /// Arquivo compactado no destino.
@@ -191,13 +184,15 @@ pub(crate) async fn fetch_and_extract(
     file: &RemoteFile<'_>,
     staging: &Path,
     target: &Target<'_>,
+    keys: Vec<SecretKey>,
     cancel: &Arc<AtomicBool>,
     progress: &(dyn Fn(&Progress) + Send + Sync),
 ) -> Result<ExtractReport, (RunStatus, ServiceError)> {
+    // O temporário mantém a extensão completa: `.age` diz que é preciso decifrar.
     let temp = TempFile(staging.join(format!(
         "{TMP_PREFIX}{}.{}",
         Uuid::new_v4(),
-        target.format.extension()
+        target.extension
     )));
     progress(&Progress {
         done: 0,
@@ -250,6 +245,7 @@ pub(crate) async fn fetch_and_extract(
             archive: &archive_path,
             dest: &dest,
             reserve_bytes: DISK_RESERVE_BYTES,
+            keys: &keys,
             cancel: &cancel,
             progress: report,
         })

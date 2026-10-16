@@ -41,8 +41,9 @@ impl<R: Read> Read for Exact<R> {
         Ok(n)
     }
 }
+use crate::crypto::{self, PublicKey};
 use crate::domain::EntryKind;
-use crate::error::{CoreError, CoreResult, IoContext};
+use crate::error::{CoreError, CoreResult, IoContext, ValidationIssue};
 use crate::sync::scanner::ScanResult;
 
 /// RN-61: já comprimidos — no ZIP vão sem recompressão (seria só tempo perdido).
@@ -60,6 +61,9 @@ pub struct CreateRequest<'a> {
     pub format: ArchiveFormat,
     /// Nível de compressão; `None` = padrão do formato (RN-61).
     pub level: Option<i32>,
+    /// RN-70, RN-73: cifra com esta chave pública (só TAR.ZST, RN-63). O nome de saída
+    /// deve terminar em `.age`.
+    pub encrypt: Option<&'a PublicKey>,
     pub cancel: &'a AtomicBool,
     pub progress: &'a (dyn Fn(&ArchiveProgress) + Send + Sync),
 }
@@ -77,6 +81,12 @@ pub struct CreateReport {
 pub fn create(req: &CreateRequest<'_>) -> CoreResult<CreateReport> {
     if req.output.exists() {
         return Err(already_exists(req.output));
+    }
+    if req.encrypt.is_some() && req.format != ArchiveFormat::TarZst {
+        return Err(CoreError::Invalid(vec![ValidationIssue::new(
+            "criptografia",
+            "a criptografia exige o formato TAR.ZST",
+        )]));
     }
     let tmp = temp_sibling(req.output);
     let result = Writer::new(req).write(&tmp);
@@ -160,10 +170,21 @@ impl<'a> Writer<'a> {
             }
             ArchiveFormat::TarZst => {
                 let level = self.req.level.map_or(3, |l| l.clamp(1, 19));
-                let mut encoder = zstd::Encoder::new(out, level).at(tmp)?;
-                let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
-                encoder.multithread(threads as u32).at(tmp)?;
-                self.tar(encoder)?.finish().at(tmp)?
+                let threads = std::thread::available_parallelism().map_or(1, |n| n.get()) as u32;
+                match self.req.encrypt {
+                    None => {
+                        let mut encoder = zstd::Encoder::new(out, level).at(tmp)?;
+                        encoder.multithread(threads).at(tmp)?;
+                        self.tar(encoder)?.finish().at(tmp)?
+                    }
+                    // TAR → zstd → age → arquivo: nada sai em claro para o disco.
+                    Some(key) => {
+                        let sealed = crypto::encrypt_writer(key, out).at(tmp)?;
+                        let mut encoder = zstd::Encoder::new(sealed, level).at(tmp)?;
+                        encoder.multithread(threads).at(tmp)?;
+                        self.tar(encoder)?.finish().at(tmp)?.finish().at(tmp)?
+                    }
+                }
             }
         };
         let file = out.into_inner().map_err(|e| e.into_error()).at(tmp)?;

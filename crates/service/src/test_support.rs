@@ -119,3 +119,31 @@ impl SecretStore for LockedStore {
         Err("cofre de senhas do sistema indisponível (bloqueado)".into())
     }
 }
+
+/// Cofre em memória que anota cada chave lida — prova o que foi (ou não) consultado.
+#[derive(Default)]
+pub struct RecordingStore {
+    inner: MemoryStore,
+    pub reads: Mutex<Vec<String>>,
+}
+
+impl RecordingStore {
+    pub fn reads(&self) -> Vec<String> {
+        self.reads.lock().unwrap().clone()
+    }
+}
+
+impl SecretStore for RecordingStore {
+    fn get(&self, key: &str) -> Result<Option<String>, String> {
+        self.reads.lock().unwrap().push(key.to_string());
+        self.inner.get(key)
+    }
+
+    fn set(&self, key: &str, value: &str) -> Result<(), String> {
+        self.inner.set(key, value)
+    }
+
+    fn delete(&self, key: &str) -> Result<(), String> {
+        self.inner.delete(key)
+    }
+}

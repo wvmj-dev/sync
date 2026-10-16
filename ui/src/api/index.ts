@@ -8,12 +8,14 @@ import type {
   ArchiveProgress,
   CompressRequest,
   CompressResult,
+  EncryptionStatus,
   ExtractResult,
   ApiErrorCode,
   AppInfo,
   JobDraft,
   JobStatus,
   JobSummary,
+  NewEncryptionKey,
   PlanPreview,
   Preferences,
   RemoteItem,
@@ -71,6 +73,14 @@ export const api = {
   /** Valores fora dos limites voltam com o código `invalid`. */
   savePreferences: (preferences: Preferences) =>
     call<Preferences>("save_preferences", { preferences }),
+  // RN-71 a RN-74: a chave privada nunca passa por aqui — só a pública e o caminho do
+  // arquivo de recuperação, que o Rust grava direto na pasta escolhida.
+  encryptionStatus: () => call<EncryptionStatus>("encryption_status"),
+  createEncryptionKey: (folder: string) =>
+    call<NewEncryptionKey>("create_encryption_key", { folder }),
+  activateEncryptionKey: (publicKey: string, saved: boolean) =>
+    call<EncryptionStatus>("activate_encryption_key", { publicKey, saved }),
+  importEncryptionKey: (path: string) => call<EncryptionStatus>("import_encryption_key", { path }),
   listAccounts: () => call<AccountSummary[]>("list_accounts"),
   addLocalAccount: (label: string, root: string) =>
     call<AccountSummary>("add_local_account", { label, root }),
@@ -121,6 +131,12 @@ export async function pickFolder(title: string): Promise<string | null> {
   return typeof picked === "string" ? picked : null;
 }
 
+/** Um único arquivo (ex.: o arquivo de recuperação da chave). */
+export async function pickFile(title: string): Promise<string | null> {
+  const picked = await open({ directory: false, multiple: false, title });
+  return typeof picked === "string" ? picked : null;
+}
+
 export async function pickFiles(title: string): Promise<string[]> {
   const picked = await open({ directory: false, multiple: true, title });
   if (Array.isArray(picked)) return picked;
@@ -139,7 +155,8 @@ export async function pickArchive(title: string): Promise<string | null> {
     multiple: false,
     title,
     filters: [
-      { name: "Arquivos compactados", extensions: ["zip", "tar", "gz", "tgz", "zst", "tzst"] },
+      // `age`: versões criptografadas (`.tar.zst.age`, RN-63).
+      { name: "Arquivos compactados", extensions: ["zip", "tar", "gz", "tgz", "zst", "tzst", "age"] },
     ],
   });
   return typeof picked === "string" ? picked : null;

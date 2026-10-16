@@ -21,6 +21,11 @@ pub fn account_key(id: Uuid) -> String {
     format!("account:{id}")
 }
 
+/// Entrada de uma chave privada da criptografia (SEG-61): `age-key:<impressão digital>`.
+pub fn encryption_key(fingerprint: &str) -> String {
+    format!("age-key:{fingerprint}")
+}
+
 pub struct KeyringStore;
 
 fn keyring_error(e: keyring::Error) -> String {

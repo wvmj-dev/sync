@@ -26,7 +26,7 @@ e TAR. Tudo verificado por checksum.
 | **Status**: situação e última modificação de cada arquivo e pasta (aqui e no destino, e quem modificou), próxima execução | ✅ |
 | **Restaurar uma versão**: baixa, confere o checksum e descompacta numa pasta nova | ✅ |
 | **Receber**: tarefa que baixa a versão mais recente e descompacta numa pasta nova | ✅ |
-| Criptografia das versões | fase 2e |
+| **Criptografia** das versões (`age`): só abre com a sua chave de recuperação | ✅ |
 | **Agendamento** (a cada N horas, diário, semanal ou personalizado) pelo systemd, mesmo com o app fechado; notificação quando algo precisa de atenção | ✅ |
 | Sem internet, a execução agendada fica **adiada** e tenta de novo a cada 15 min | ✅ |
 | Login do Google vencido: a conta pede para **reconectar** e os agendamentos dela ficam pausados até lá | ✅ |
@@ -67,7 +67,7 @@ Para usar o Google Drive, configure antes o seu projeto no Google Cloud:
 | **Tarefas** | Criar uma tarefa (o que ela faz + destino + agendamento), **Pré-visualizar** e **Executar**. Na primeira execução o app pede confirmação; o agendamento só começa depois dela. **Status** mostra a situação de cada arquivo e pasta (funciona sem rede; **Atualizar do destino** consulta a nuvem). Em tarefas compactadas, **Versões → Restaurar…** descompacta uma versão numa pasta nova. |
 | **Arquivos** | Navegar na pasta `Syncly/` de uma conta, **criar pastas**, **enviar** e **baixar** arquivos avulsos, **enviar uma pasta compactada** e **baixar e descompactar** um `.zip`/`.tar.*`. |
 | **Compactar** | Compactar pastas/arquivos em ZIP, TAR.GZ, TAR.ZST ou TAR, e descompactar numa pasta nova. |
-| **Preferências** | Quando avisar (só problemas, sempre ou nunca), quantas transferências ao mesmo tempo e quanto espaço deixar livre na conta. |
+| **Preferências** | Quando avisar (só problemas, sempre ou nunca), quantas transferências ao mesmo tempo, quanto espaço deixar livre na conta e a **chave da criptografia** (criar, trocar ou importar de outro computador). |
 
 O que uma tarefa faz:
 
@@ -91,7 +91,9 @@ Dicas:
 - Feche programas que escrevem nos arquivos da tarefa (ex.: um jogo com o mundo aberto).
   Não corrompe nada, mas o que mudar durante o envio é reenviado na próxima execução.
 - Da segunda execução em diante, só vai o que mudou.
-- Compactar não é criptografar: as versões ficam legíveis no Drive, como os demais arquivos.
+- Compactar não é criptografar: sem a opção **Criptografar as versões**, elas ficam legíveis no
+  Drive, como os demais arquivos. Com ela, guarde o arquivo de recuperação fora do computador:
+  sem ele, as versões não abrem.
 - Enquanto o app estiver em "Testando" no Google Cloud, o login vale por 7 dias; depois,
   **Contas → Reconectar**. Até lá, os agendamentos dessa conta ficam pausados (uma
   notificação avisa) e voltam sozinhos ao reconectar.
@@ -127,11 +129,17 @@ cargo run -p syncly-cli -- remote get Testes/Fotos.tar.zst ~/Downloads --extract
 cargo run -p syncly-cli -- archive create ~/Fotos --format zip --out ~/Downloads
 cargo run -p syncly-cli -- archive create ~/projeto ~/notas.md --format tar.gz --name backup
 cargo run -p syncly-cli -- archive extract ~/Downloads/Fotos.zip ~/Desktop
+
+cargo run -p syncly-cli -- keys                                   # situação da criptografia
+cargo run -p syncly-cli -- keys create /run/media/eu/PENDRIVE     # grava o arquivo de recuperação
+cargo run -p syncly-cli -- keys activate age1… --saved            # depois de guardar o arquivo
+cargo run -p syncly-cli -- keys import ~/syncly-chave-….txt       # em outro computador
+cargo run -p syncly-cli -- archive create ~/Fotos --format tar.zst --encrypt   # → Fotos.tar.zst.age
 ```
 
 Com mais de uma conta, escolha com `--account <nome ou e-mail>`. Para instalar o binário
 `syncly` no PATH: `cargo install --path crates/cli`. Códigos de saída do `run`: 0 sucesso,
-1 falha, 2 exige confirmação, 3 sucesso parcial.
+1 falha, 2 exige confirmação, 3 sucesso parcial, 75 adiada sem rede (o systemd tenta de novo).
 
 ### Onde ficam os dados
 
@@ -141,7 +149,8 @@ Com mais de uma conta, escolha com `--account <nome ou e-mail>`. Para instalar o
 | Cliente OAuth do Google | `~/.config/syncly/google-client.json` |
 | Estado (índice, histórico) | `~/.local/share/syncly/state.db` |
 | Logs (14 dias; `SYNCLY_LOG=debug` para mais detalhes) | `~/.local/state/syncly/logs/` |
-| Tokens e chaves | keyring do sistema (GNOME Keyring/KWallet) |
+| Tokens e chaves privadas | keyring do sistema (GNOME Keyring/KWallet) |
+| Cópia da chave da criptografia | o arquivo `syncly-chave-….txt` que você guardou (pendrive, gerenciador de senhas) |
 | Agendamentos | `~/.config/systemd/user/syncly-<id>.timer` e `.service` |
 | Arquivos enviados | pasta `Syncly/` na conta (Drive ou pasta local) |
 

@@ -13,6 +13,7 @@ use syncly_core::archive::{
     fingerprint, version_name,
 };
 use syncly_core::backup::retention::plan_retention;
+use syncly_core::crypto::PublicKey;
 use syncly_core::domain::{EntryKind, PlanStats, Retention, RunKind, RunStatus};
 use syncly_core::filters::Filter;
 use syncly_core::fsutil::ensure_private_dir;
@@ -38,6 +39,8 @@ pub(crate) const TMP_PREFIX: &str = ".syncly-tmp-";
 pub(crate) struct ArchiveExec<'a> {
     pub format: ArchiveFormat,
     pub retention: Retention,
+    /// RN-70, RN-73: chave pública que cifra a versão (`None` = em claro).
+    pub encrypt: Option<PublicKey>,
     pub options: RunOptions,
     pub cancel: &'a Arc<AtomicBool>,
     pub progress: &'a (dyn Fn(&Progress) + Send + Sync),
@@ -153,6 +156,7 @@ impl Service {
         loaded: Loaded,
         format: ArchiveFormat,
         retention: Retention,
+        encrypt: bool,
         started: Instant,
     ) -> ServiceResult<PlanPreview> {
         let p = self.prepare_archive(loaded, format).await?;
@@ -185,7 +189,7 @@ impl Service {
             first_run: p.first_run,
             receive: None,
             archive: Some(ArchivePreview {
-                name: version_name(&p.loaded.job.name, now, format, |_| false),
+                name: version_name(&p.loaded.job.name, now, format, encrypt, |_| false),
                 format,
                 files,
                 folders,
@@ -291,9 +295,9 @@ impl Service {
         let temp = TempFile(staging.join(format!(
             "{TMP_PREFIX}{}.{}",
             Uuid::new_v4(),
-            exec.format.extension()
+            crate::archive::archive_extension(exec.format, exec.encrypt.is_some())
         )));
-        let created = compress(p, &temp.0, exec.format, exec.cancel, exec.progress)
+        let created = compress(p, &temp.0, exec, exec.progress)
             .await
             .map_err(|e| match e {
                 ServiceError::Core(CoreError::Cancelled) => (RunStatus::Cancelled, e),
@@ -324,6 +328,7 @@ impl Service {
             &p.loaded.job.name,
             now.with_timezone(&Local).naive_local(),
             exec.format,
+            exec.encrypt.is_some(),
             |n| taken.iter().any(|t| t == n),
         );
         (exec.progress)(&Progress {
@@ -352,6 +357,8 @@ impl Service {
                 hash: entry.hash,
                 fingerprint: p.fingerprint.clone(),
                 created_at: now,
+                // RN-74
+                key_fingerprint: exec.encrypt.as_ref().map(PublicKey::fingerprint),
             })
             .map_err(failed)?;
         (exec.progress)(&Progress {
@@ -442,19 +449,21 @@ pub(crate) fn failed(e: impl Into<ServiceError>) -> (RunStatus, ServiceError) {
 async fn compress(
     p: &Prepared,
     output: &Path,
-    format: ArchiveFormat,
-    cancel: &Arc<AtomicBool>,
+    exec: &ArchiveExec<'_>,
     progress: &(dyn Fn(&Progress) + Send + Sync),
 ) -> ServiceResult<CreateReport> {
     let scan = p.scan.clone();
     let output = output.to_path_buf();
-    let cancel = cancel.clone();
+    let cancel = exec.cancel.clone();
+    let format = exec.format;
+    let key = exec.encrypt.clone();
     with_progress(progress, move |report| {
         archive::create(&CreateRequest {
             scan: &scan,
             output: &output,
             format,
             level: None,
+            encrypt: key.as_ref(),
             cancel: &cancel,
             progress: report,
         })
@@ -581,6 +590,7 @@ pub(crate) mod tests {
                     delivery: Delivery::Archive {
                         format: ArchiveFormat::Zip,
                         retention,
+                        encrypt: false,
                     },
                     mode: SyncMode::Upload,
                     schedule: None,

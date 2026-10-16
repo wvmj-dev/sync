@@ -8,8 +8,8 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 use syncly_service::dto::{
-    AccountSummary, AppInfo, JobDraft, JobStatus, JobSummary, PlanPreview, Preferences, RemoteItem,
-    RunReport, UploadCompressedRequest, VersionItem,
+    AccountSummary, AppInfo, EncryptionStatus, JobDraft, JobStatus, JobSummary, NewEncryptionKey,
+    PlanPreview, Preferences, RemoteItem, RunReport, UploadCompressedRequest, VersionItem,
 };
 use syncly_service::{
     CompressRequest, CompressResult, ExtractResult, Progress, RunOptions, RunTrigger, Service,
@@ -52,6 +52,41 @@ pub async fn app_info(service: State<'_, Service>) -> ApiResult<AppInfo> {
 #[tauri::command]
 pub async fn get_preferences(service: State<'_, Service>) -> ApiResult<Preferences> {
     Ok(service.preferences()?)
+}
+
+/// RN-71 a RN-74: só impressões digitais — a chave privada nunca vem para a webview.
+#[tauri::command]
+pub async fn encryption_status(service: State<'_, Service>) -> ApiResult<EncryptionStatus> {
+    Ok(service.encryption_status()?)
+}
+
+/// RN-72: grava a chave privada no keyring e o arquivo de recuperação em `folder`, sem
+/// ativar. A webview recebe só a chave pública e o caminho do arquivo.
+#[tauri::command]
+pub async fn create_encryption_key(
+    service: State<'_, Service>,
+    folder: PathBuf,
+) -> ApiResult<NewEncryptionKey> {
+    Ok(service.create_encryption_key(&folder).await?)
+}
+
+/// RN-72: ativa só com a confirmação de que o arquivo de recuperação foi guardado.
+#[tauri::command]
+pub async fn activate_encryption_key(
+    service: State<'_, Service>,
+    public_key: String,
+    saved: bool,
+) -> ApiResult<EncryptionStatus> {
+    Ok(service.activate_encryption_key(&public_key, saved).await?)
+}
+
+/// RN-74: importa um arquivo de recuperação (outro computador ou chave antiga).
+#[tauri::command]
+pub async fn import_encryption_key(
+    service: State<'_, Service>,
+    path: PathBuf,
+) -> ApiResult<EncryptionStatus> {
+    Ok(service.import_encryption_key(&path).await?)
 }
 
 /// Grava as preferências (RN-46, RN-94, SEG-41); valores fora dos limites são recusados.

@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::domain::{Account, AccountKind, Job, ValidationContext};
+use crate::crypto::PublicKey;
+use crate::domain::{Account, AccountKind, Delivery, Job, ValidationContext};
 use crate::error::{CoreError, CoreResult, IoContext, ValidationIssue};
 use crate::fsutil::write_atomic;
 
@@ -49,11 +50,54 @@ impl Default for Settings {
     }
 }
 
+/// RN-71, RN-74: chaves da criptografia das versões. Só chaves **públicas** (`age1…`); as
+/// privadas ficam no keyring.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Encryption {
+    /// Chave das novas versões. `None` = criptografia ainda não ativada (RN-72).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_key: Option<String>,
+    /// Chaves cujas privadas estão no keyring — a atual e as antigas, para que versões
+    /// antigas continuem abrindo depois de uma troca de chave (RN-74).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub known_keys: Vec<String>,
+}
+
+impl Encryption {
+    pub fn is_empty(&self) -> bool {
+        self.public_key.is_none() && self.known_keys.is_empty()
+    }
+
+    /// A chave das novas versões (RN-73: só a pública é necessária para cifrar).
+    pub fn active(&self) -> Option<PublicKey> {
+        self.public_key
+            .as_deref()
+            .and_then(|k| PublicKey::parse(k).ok())
+    }
+
+    /// Todas as chaves conhecidas, a atual primeiro.
+    pub fn known(&self) -> Vec<PublicKey> {
+        let mut keys: Vec<PublicKey> = self.active().into_iter().collect();
+        for k in self
+            .known_keys
+            .iter()
+            .filter_map(|k| PublicKey::parse(k).ok())
+        {
+            if !keys.iter().any(|o| o.fingerprint() == k.fingerprint()) {
+                keys.push(k);
+            }
+        }
+        keys
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppConfig {
     pub version: u32,
     #[serde(default)]
     pub settings: Settings,
+    #[serde(default, skip_serializing_if = "Encryption::is_empty")]
+    pub encryption: Encryption,
     #[serde(default, rename = "account", skip_serializing_if = "Vec::is_empty")]
     pub accounts: Vec<Account>,
     #[serde(default, rename = "job", skip_serializing_if = "Vec::is_empty")]
@@ -65,6 +109,7 @@ impl Default for AppConfig {
         Self {
             version: CONFIG_VERSION,
             settings: Settings::default(),
+            encryption: Encryption::default(),
             accounts: Vec::new(),
             jobs: Vec::new(),
         }
@@ -175,6 +220,22 @@ impl AppConfig {
             ));
         }
 
+        // RN-71, RN-74
+        let e = &self.encryption;
+        for key in e.public_key.iter().chain(&e.known_keys) {
+            if let Err(msg) = PublicKey::parse(key) {
+                issues.push(ValidationIssue::new("criptografia", msg));
+            }
+        }
+        if let Some(key) = &e.public_key
+            && !e.known_keys.contains(key)
+        {
+            issues.push(ValidationIssue::new(
+                "criptografia",
+                "a chave atual precisa estar entre as chaves conhecidas",
+            ));
+        }
+
         let mut ids = HashSet::new();
         for account in &self.accounts {
             if !ids.insert(account.id) {
@@ -198,6 +259,16 @@ impl AppConfig {
                 ));
             }
             issues.extend(job.validate(&ctx));
+            // RN-72: só cifra depois de a chave estar ativa (exportada e confirmada).
+            if let Some(sync) = &job.sync
+                && matches!(sync.delivery, Delivery::Archive { encrypt: true, .. })
+                && e.active().is_none()
+            {
+                issues.push(ValidationIssue::new(
+                    &label,
+                    "ative a criptografia em Preferências → Criptografia antes de criptografar as versões",
+                ));
+            }
 
             // RN-05: tarefa desativada pode apontar para conta removida.
             if let Some(sync) = &job.sync
@@ -289,6 +360,56 @@ mod tests {
         let config = sample();
         config.save(&path, &[]).unwrap();
         assert_eq!(AppConfig::load(&path).unwrap(), config);
+    }
+
+    #[test]
+    fn rn71_rn72_chaves_e_tarefas_criptografadas() {
+        let key = crate::crypto::SecretKey::generate().public().to_string();
+        let mut config = sample();
+        if let Some(s) = config.jobs[0].sync.as_mut() {
+            s.delivery = Delivery::Archive {
+                format: crate::domain::ArchiveFormat::TarZst,
+                retention: crate::domain::Retention::default(),
+                encrypt: true,
+            };
+        }
+        // Sem chave ativa, a tarefa não pode cifrar.
+        assert!(
+            config
+                .validate(&[])
+                .iter()
+                .any(|i| i.message.contains("ative"))
+        );
+
+        config.encryption.public_key = Some(key.clone());
+        assert!(
+            config
+                .validate(&[])
+                .iter()
+                .any(|i| i.message.contains("conhecidas"))
+        );
+        config.encryption.known_keys = vec![key.clone()];
+        assert!(
+            config.validate(&[]).is_empty(),
+            "{:?}",
+            config.validate(&[])
+        );
+
+        // Só chaves públicas válidas vão para o arquivo.
+        config
+            .encryption
+            .known_keys
+            .push("AGE-SECRET-KEY-1XYZ".into());
+        assert!(!config.validate(&[]).is_empty());
+        config.encryption.known_keys.pop();
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        config.save(&path, &[]).unwrap();
+        assert_eq!(AppConfig::load(&path).unwrap(), config);
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("[encryption]") && text.contains("encrypt = true"));
+        assert_eq!(config.encryption.known().len(), 1);
     }
 
     #[test]

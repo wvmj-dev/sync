@@ -50,7 +50,8 @@ export interface Retention {
 /** O que a tarefa faz: envia arquivo por arquivo, envia compactado (RN-50) ou recebe (RN-107). */
 export type Delivery =
   | { kind: "files" }
-  | { kind: "archive"; format: ArchiveFormat; retention: Retention }
+  /** `encrypt` só vem do Rust quando ligado (RN-70; só TAR.ZST, RN-63). */
+  | { kind: "archive"; format: ArchiveFormat; retention: Retention; encrypt?: boolean }
   | { kind: "receive"; target: string };
 
 export interface AppInfo {
@@ -143,6 +144,23 @@ export interface VersionItem {
   accountLabel: string | null;
   /** Pasta no destino, relativa à raiz do app. */
   path: string;
+  /** RN-74: chave que cifrou a versão; `null` = em claro. */
+  keyFingerprint: string | null;
+}
+
+/** RN-71 a RN-74: só impressões digitais — a chave privada nunca chega à interface. */
+export interface EncryptionStatus {
+  /** Chave das novas versões; `null` = criptografia não ativada. */
+  active: string | null;
+  /** Todas as chaves deste computador, a atual primeiro. */
+  known: string[];
+}
+
+/** RN-72: chave criada, ainda não ativa. */
+export interface NewEncryptionKey {
+  fingerprint: string;
+  publicKey: string;
+  recoveryFile: string;
 }
 
 /** RN-101. */
@@ -383,6 +401,8 @@ export interface CompressRequest {
   name: string | null;
   format: ArchiveFormat;
   includeSensitive: boolean;
+  /** RN-70: só TAR.ZST, com a chave ativa. */
+  encrypt: boolean;
 }
 
 export interface CompressResult {

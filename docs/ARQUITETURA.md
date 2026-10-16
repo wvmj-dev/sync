@@ -128,7 +128,8 @@ src-tauri ──► service ──► gdrive ──► core
 | Temporários (envio compactado, restauração, recebimento, avulsos) | `~/.local/share/syncly/tmp/<tarefa ou avulsos>/.syncly-tmp-*` | apagados ao fim de cada execução | dir `0700` |
 | Logs | `~/.local/state/syncly/logs/` (`syncly-desktop.AAAA-MM-DD.log`, `syncly-cli.…`) | texto, rotação diária, 14 dias; nível via `SYNCLY_LOG` | dir `0700` |
 | Travas | `$XDG_RUNTIME_DIR/syncly/` | arquivo + `flock` | dir `0700` |
-| Tokens OAuth e chaves de criptografia | Keyring do sistema (Secret Service: GNOME Keyring/KWallet) | — | cifrado pelo SO |
+| Tokens OAuth e chaves privadas da criptografia (`account:<id>`, `age-key:<impressão digital>`) | Keyring do sistema (Secret Service: GNOME Keyring/KWallet) | — | cifrado pelo SO |
+| Chave pública da criptografia e chaves conhecidas | `config.toml`, seção `[encryption]` | `age1…` | `0600` |
 
 **Configuração ≠ estado.** O `config.toml` diz *o que o usuário quer* (pode ser lido,
 editado e copiado para outra máquina). O `state.db` guarda *o que o app sabe* (índice,
@@ -204,7 +205,12 @@ execução `receive`.
 *enviar pasta compactada* (RN-109) usam a vaga única de compactação (progresso
 `archive-progress`, `cancel_archive`) e temporários em `tmp/avulsos/`.
 
-Planejado: criptografia `age` com manifesto (fase 2e).
+**Criptografia** (RN-63, RN-70 a RN-74; `core/src/crypto.rs`, `service/src/encryption.rs`):
+TAR → zstd → `age` → disco, em fluxo — nada sai em claro. Cifrar usa só a chave pública do
+`config.toml`; abrir lê as privadas do keyring (todas as conhecidas, RN-74) só quando o nome
+termina em `.age`. Cada versão registra a impressão digital da chave (migração 6). O arquivo
+de recuperação é uma identidade do `age`, legível pelo programa `age`. Planejado: manifesto
+com o sha256 de cada arquivo.
 
 ## 7.1 Status (RN-100 a RN-103)
 
@@ -365,7 +371,7 @@ Planejado: criptografia `age` com manifesto (fase 2e).
 | 2b | Envio compactado: versões com data, retenção, backup local/remoto | ✅ |
 | 2c | Restaurar versão (baixar, conferir e descompactar numa pasta nova) | ✅ |
 | 2d | Receber: rotina de recebimento, baixar e descompactar, enviar pasta compactada (RN-107 a RN-110) | ✅ |
-| 2e | Criptografia (age) e manifesto das versões | |
+| 2e | Criptografia (age) das versões; manifesto com o sha256 de cada arquivo | criptografia ✅, manifesto pendente |
 | 3a | Agendamento (timers do systemd), notificações, adiar sem rede (RN-84), conta a reconectar (RN-06, RN-85), Preferências | ✅ |
 | 3b | Ícone na bandeja | fora do plano: o GNOME só mostra com a extensão AppIndicator, e o agendamento e as notificações já funcionam com o app fechado |
 | 4 | Changes API, download/bidirecional (requer decisão sobre escopo — ver SEG-03) | adiada: mantém `drive.file` (decisão de 2026-10-16) |

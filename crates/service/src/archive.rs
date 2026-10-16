@@ -13,6 +13,7 @@ use syncly_core::archive::{
     self, ArchiveFormat, ArchiveProgress, CreateRequest, DISK_RESERVE_BYTES, ExtractReport,
     ExtractRequest, SkippedEntry,
 };
+use syncly_core::crypto::{self, SecretKey};
 use syncly_core::domain::Job;
 use syncly_core::domain::rel_path::validate_name;
 use syncly_core::filters::Filter;
@@ -38,6 +39,9 @@ pub struct CompressRequest {
     /// RN-64: arquivos sensíveis só entram se marcado.
     #[serde(default)]
     pub include_sensitive: bool,
+    /// RN-70: cifra com a chave ativa (só TAR.ZST, RN-63) — gera `.tar.zst.age`.
+    #[serde(default)]
+    pub encrypt: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -142,13 +146,25 @@ impl Service {
             ));
         }
 
+        // RN-63, RN-73: só a chave pública, e só TAR.ZST.
+        let key = match req.encrypt {
+            true if req.format != ArchiveFormat::TarZst => {
+                return Err(ServiceError::Invalid(
+                    "a criptografia exige o formato TAR.ZST".into(),
+                ));
+            }
+            true => Some(self.encryption_public_key()?),
+            false => None,
+        };
+
         let (_slot, cancel) = Slot::take(&self.archive_op)?;
         let scan = self
             .scan_inputs(req.inputs.clone(), req.include_sensitive)
             .await?;
         ensure_space(&req.output_dir, total_size(&scan), "a pasta de saída")?;
 
-        let output = unique_path(&req.output_dir, &name, req.format.extension());
+        let extension = archive_extension(req.format, key.is_some());
+        let output = unique_path(&req.output_dir, &name, &extension);
         let warnings: Vec<String> = scan.warnings.iter().map(|w| w.describe()).collect();
         let format = req.format;
         let report = blocking(move || {
@@ -157,6 +173,7 @@ impl Service {
                 output: &output,
                 format,
                 level: None,
+                encrypt: key.as_ref(),
                 cancel: &cancel,
                 progress: &progress,
             })
@@ -216,10 +233,12 @@ impl Service {
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or_default();
-        let stem = archive_stem(file_name)?;
+        let name = ArchiveName::parse(file_name, "extraido")?;
+        let keys = self.keys_for(file_name).await?;
 
         let (_slot, cancel) = Slot::take(&self.archive_op)?;
-        let report = extract_new_folder(archive_path, &dest_dir, &stem, cancel, progress).await?;
+        let report =
+            extract_new_folder(archive_path, &dest_dir, &name.stem, keys, cancel, progress).await?;
         Ok(ExtractResult::from_report(report, started))
     }
 }
@@ -239,18 +258,48 @@ impl ExtractResult {
     }
 }
 
-/// RN-65: a pasta nova leva o nome do arquivo sem a extensão.
-pub(crate) fn archive_stem(file_name: &str) -> ServiceResult<String> {
-    let Some((_, stem)) = ArchiveFormat::detect(file_name) else {
-        return Err(ServiceError::Invalid(
-            "formato não suportado — use .zip, .tar, .tar.gz ou .tar.zst".into(),
-        ));
-    };
-    Ok(if validate_name(stem).is_ok() {
-        stem.to_string()
+/// Formato, nome sem extensão e se o arquivo é criptografado (`.age`, RN-63).
+pub(crate) struct ArchiveName {
+    pub format: ArchiveFormat,
+    /// RN-65: a pasta nova leva o nome do arquivo sem a extensão (ou `fallback`).
+    pub stem: String,
+    pub encrypted: bool,
+}
+
+impl ArchiveName {
+    pub(crate) fn parse(file_name: &str, fallback: &str) -> ServiceResult<Self> {
+        let (encrypted, inner) = match crypto::strip_extension(file_name) {
+            Some(inner) => (true, inner),
+            None => (false, file_name),
+        };
+        let Some((format, stem)) = ArchiveFormat::detect(inner) else {
+            return Err(ServiceError::Invalid(
+                "formato não suportado — use .zip, .tar, .tar.gz, .tar.zst ou .tar.zst.age".into(),
+            ));
+        };
+        Ok(Self {
+            format,
+            stem: if validate_name(stem).is_ok() {
+                stem.to_string()
+            } else {
+                fallback.to_string()
+            },
+            encrypted,
+        })
+    }
+
+    /// Extensão completa, com `.age` se for criptografado.
+    pub(crate) fn extension(&self) -> String {
+        archive_extension(self.format, self.encrypted)
+    }
+}
+
+pub(crate) fn archive_extension(format: ArchiveFormat, encrypted: bool) -> String {
+    if encrypted {
+        format!("{}.{}", format.extension(), crypto::EXTENSION)
     } else {
-        "extraido".to_string()
-    })
+        format.extension().to_string()
+    }
 }
 
 /// RN-65 a RN-67: descompacta numa pasta nova dentro de `dest_dir` — nunca por cima de
@@ -259,6 +308,7 @@ pub(crate) async fn extract_new_folder(
     archive_path: PathBuf,
     dest_dir: &Path,
     stem: &str,
+    keys: Vec<SecretKey>,
     cancel: Arc<AtomicBool>,
     progress: impl Fn(&ArchiveProgress) + Send + Sync + 'static,
 ) -> ServiceResult<ExtractReport> {
@@ -268,6 +318,7 @@ pub(crate) async fn extract_new_folder(
             archive: &archive_path,
             dest: &dest,
             reserve_bytes: DISK_RESERVE_BYTES,
+            keys: &keys,
             cancel: &cancel,
             progress: &progress,
         })
@@ -353,6 +404,7 @@ mod tests {
             name: None,
             format,
             include_sensitive: false,
+            encrypt: false,
         }
     }
 

@@ -81,7 +81,9 @@ export function formatLabel(format: ArchiveFormat): string {
 export function deliveryLabel(sync: SyncSummary): string {
   switch (sync.delivery.kind) {
     case "archive":
-      return `Compactado (${formatLabel(sync.delivery.format)})`;
+      return sync.delivery.encrypt
+        ? `Compactado e criptografado (${formatLabel(sync.delivery.format)})`
+        : `Compactado (${formatLabel(sync.delivery.format)})`;
     case "receive":
       return "Recebe";
     default:
@@ -169,7 +171,9 @@ export const actionChip: Record<ActionKind, string> = {
 export function kindLabel(sync: SyncSummary): string {
   switch (sync.delivery.kind) {
     case "archive":
-      return `Envia compactado (${formatLabel(sync.delivery.format)})`;
+      return sync.delivery.encrypt
+        ? `Envia compactado e criptografado (${formatLabel(sync.delivery.format)})`
+        : `Envia compactado (${formatLabel(sync.delivery.format)})`;
     case "receive":
       return "Recebe e descompacta";
     default:

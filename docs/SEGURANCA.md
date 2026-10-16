@@ -10,7 +10,8 @@
 | "E se o app apagar algo por engano?" | Não existe exclusão definitiva no código. Tudo vai para a lixeira do Drive (30 dias). Guardas bloqueiam exclusões em massa. O Drive ainda mantém o histórico de versões de cada arquivo. |
 | "E se encher meu armazenamento?" | O app checa a cota antes de enviar e mantém uma reserva mínima (1 GiB). Conta cheia faz o Gmail parar de receber e-mails — o app não deixa chegar lá. |
 | "E se roubarem meu token?" | Tokens ficam no keyring do sistema (cifrado pelo SO), nunca em arquivo nem na interface web do app. Você pode revogar o acesso a qualquer momento em [myaccount.google.com/connections](https://myaccount.google.com/connections). |
-| "O Google vai 'ler' meus arquivos?" | Arquivos enviados ficam legíveis no Drive — é o que permite abri-los lá. Isso vale também para as versões compactadas: compactar **não** é criptografar. A criptografia local das versões (`age`, o Google só guarda bytes cifrados) chega na fase 2e. Arquivos sensíveis (`.env`, chaves, `.ssh`) já ficam de fora por padrão. |
+| "O Google vai 'ler' meus arquivos?" | Arquivos enviados ficam legíveis no Drive — é o que permite abri-los lá. Isso vale também para as versões compactadas: compactar **não** é criptografar. Para isso, ligue **Criptografar as versões** na tarefa: elas são cifradas no computador com `age` e o Google só guarda bytes ilegíveis. Arquivos sensíveis (`.env`, chaves, `.ssh`) já ficam de fora por padrão. |
+| "E se eu perder a chave das versões criptografadas?" | Sem o arquivo de recuperação (e sem este computador), elas não abrem — nem pelo Syncly, nem por ninguém. Por isso o app só ativa a criptografia depois de você confirmar que guardou o arquivo fora do computador. |
 | "Abrir um `.zip` baixado da internet no Syncly é seguro?" | Sim: ele é tratado como não confiável. Nada é gravado fora da pasta nova de destino, links e permissões perigosas são ignorados, e um arquivo feito para encher o disco ("bomba de compressão") é interrompido antes (SEG-26). |
 
 ## 2. O que protegemos e de quem
@@ -86,10 +87,11 @@ chaves de criptografia; integridade dos backups.
 ### Criptografia
 
 - **SEG-60** — `age` (X25519 + ChaCha20-Poly1305), via crate `age`. Nenhuma criptografia "caseira".
-- **SEG-61** — Chave privada só no keyring + arquivo de recuperação exportado pelo usuário (RN-72). Versões automáticas usam apenas a chave pública (RN-73).
+- **SEG-61** — Chave privada só no keyring + arquivo de recuperação exportado pelo usuário (RN-72). Versões automáticas usam apenas a chave pública (RN-73). A privada nunca vai para DTO, log ou mensagem de erro: o Rust grava o arquivo de recuperação direto na pasta escolhida e a interface só recebe a chave pública, a impressão digital e o caminho; o `Debug` da chave mostra só a impressão digital.
+- **SEG-62** — Versão adulterada nunca vira dado errado: cada bloco do `age` é autenticado, e uma falha interrompe a extração sem deixar nada na pasta de destino.
 
 ## 4. Fora do escopo (limites conhecidos)
 
 - Um malware rodando **como seu usuário**, com a sessão desbloqueada, pode pedir os segredos ao keyring. Nenhum app desktop resolve isso; mantenha o sistema atualizado.
-- Arquivos enviados — sincronizados ou em versões compactadas — ficam legíveis pelo Google; é o que permite visualizá-los no Drive. Para dados sensíveis, aguarde as versões criptografadas (fase 2e) ou mantenha-os fora da tarefa (por padrão, `.env`, chaves e `.ssh` já ficam).
+- Arquivos enviados — sincronizados ou em versões compactadas — ficam legíveis pelo Google; é o que permite visualizá-los no Drive. Para dados sensíveis, use as versões criptografadas (RN-70) ou mantenha-os fora da tarefa (por padrão, `.env`, chaves e `.ssh` já ficam).
 - Arquivos colocados na pasta `Syncly/` pelo site do Drive não são visíveis ao app enquanto o escopo for `drive.file` (SEG-03).

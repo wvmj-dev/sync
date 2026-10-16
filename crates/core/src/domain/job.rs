@@ -64,6 +64,9 @@ pub enum Delivery {
         format: ArchiveFormat,
         #[serde(default)]
         retention: Retention,
+        /// RN-70: cifra cada versão com a chave pública do app (`.tar.zst.age`, RN-63).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        encrypt: bool,
     },
     /// Recebe: baixa a versão mais recente do destino e a descompacta numa pasta nova
     /// dentro de `target` (RN-107). Não tem fontes (RN-110).
@@ -280,6 +283,19 @@ impl Job {
             {
                 push("versões", "mantenha pelo menos a última versão".into());
             }
+            // RN-63: só o TAR.ZST é criptografado (o ZIP precisa de acesso aleatório).
+            if let Delivery::Archive {
+                format,
+                encrypt: true,
+                ..
+            } = sync.delivery
+                && format != ArchiveFormat::TarZst
+            {
+                push(
+                    "criptografia",
+                    "a criptografia exige o formato TAR.ZST".into(),
+                );
+            }
             if !(1..=100).contains(&sync.guard.max_trash_percent) {
                 push("proteção", "percentual deve estar entre 1 e 100".into());
             }
@@ -395,6 +411,7 @@ mod tests {
                 keep_last,
                 ..Retention::default()
             },
+            encrypt: false,
         };
         if let Some(s) = j.sync.as_mut() {
             s.delivery = archive(0);
@@ -402,6 +419,24 @@ mod tests {
         assert!(!issues(&j).is_empty());
         if let Some(s) = j.sync.as_mut() {
             s.delivery = archive(1);
+        }
+        assert!(issues(&j).is_empty());
+    }
+
+    #[test]
+    fn rn63_criptografia_so_em_tar_zst() {
+        let mut j = job(&["/home/u/Docs"]);
+        let with = |format| Delivery::Archive {
+            format,
+            retention: Retention::default(),
+            encrypt: true,
+        };
+        if let Some(s) = j.sync.as_mut() {
+            s.delivery = with(ArchiveFormat::Zip);
+        }
+        assert!(issues(&j).iter().any(|i| i.contains("TAR.ZST")));
+        if let Some(s) = j.sync.as_mut() {
+            s.delivery = with(ArchiveFormat::TarZst);
         }
         assert!(issues(&j).is_empty());
     }

@@ -39,7 +39,7 @@ onMounted(async () => {
 });
 onUnmounted(() => stopListening?.());
 
-const ARCHIVE_NAME = /\.(zip|tar|tar\.gz|tgz|tar\.zst|tzst)$/i;
+const ARCHIVE_NAME = /\.(zip|tar|tar\.gz|tgz|tar\.zst|tzst|tar\.zst\.age)$/i;
 
 const crumbs = computed(() => {
   const parts = path.value ? path.value.split("/") : [];

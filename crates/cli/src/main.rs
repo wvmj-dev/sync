@@ -85,6 +85,11 @@ enum Command {
         #[command(subcommand)]
         action: ArchiveCommand,
     },
+    /// Chave da criptografia das versões (RN-71 a RN-74). Sem subcomando: a situação.
+    Keys {
+        #[command(subcommand)]
+        action: Option<KeysCommand>,
+    },
     /// Conta Google.
     Google {
         #[command(subcommand)]
@@ -97,6 +102,29 @@ enum Command {
         /// Nome, e-mail ou ID da conta (dispensável se houver só uma).
         #[arg(long, global = true, value_name = "CONTA")]
         account: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum KeysCommand {
+    /// Cria uma chave e grava o arquivo de recuperação na pasta (de preferência um
+    /// pendrive). Ainda não ativa: guarde o arquivo e rode `keys activate`.
+    Create {
+        #[arg(value_name = "PASTA")]
+        folder: PathBuf,
+    },
+    /// Passa a cifrar as novas versões com esta chave pública (`age1…`).
+    Activate {
+        #[arg(value_name = "CHAVE_PUBLICA")]
+        public_key: String,
+        /// RN-72: confirma que o arquivo de recuperação foi guardado em lugar seguro.
+        #[arg(long)]
+        saved: bool,
+    },
+    /// Importa um arquivo de recuperação (outro computador ou chave antiga).
+    Import {
+        #[arg(value_name = "ARQUIVO")]
+        file: PathBuf,
     },
 }
 
@@ -117,8 +145,11 @@ enum ArchiveCommand {
         /// RN-64: inclui `.env`, chaves, `.ssh`… (não recomendado).
         #[arg(long)]
         include_sensitive: bool,
+        /// RN-70: cifra com a chave ativa (exige `--format tar.zst`).
+        #[arg(long)]
+        encrypt: bool,
     },
-    /// Descompacta numa pasta nova (.zip, .tar, .tar.gz, .tar.zst).
+    /// Descompacta numa pasta nova (.zip, .tar, .tar.gz, .tar.zst, .tar.zst.age).
     Extract {
         #[arg(value_name = "ARQUIVO")]
         archive: PathBuf,
@@ -426,6 +457,7 @@ async fn run(cli: Cli) -> Result<ExitCode, syncly_service::ServiceError> {
                     out,
                     name,
                     include_sensitive,
+                    encrypt,
                 } => {
                     let inputs = inputs
                         .iter()
@@ -437,6 +469,7 @@ async fn run(cli: Cli) -> Result<ExitCode, syncly_service::ServiceError> {
                         name,
                         format: format.into(),
                         include_sensitive,
+                        encrypt,
                     };
                     let result = service.compress(request, show).await;
                     if interactive {
@@ -463,6 +496,41 @@ async fn run(cli: Cli) -> Result<ExitCode, syncly_service::ServiceError> {
                     }
                     print_extracted("Extraído em", &result?);
                 }
+            }
+        }
+        Command::Keys { action } => {
+            let status = match action {
+                None => service.encryption_status()?,
+                Some(KeysCommand::Create { folder }) => {
+                    let key = service.create_encryption_key(&absolute(&folder)?).await?;
+                    println!(
+                        "Chave criada ({}). Arquivo de recuperação: {}
+                         Sem ele, as versões criptografadas NÃO podem ser abertas. Guarde-o fora
+                         deste computador e então ative:
+  syncly keys activate {} --saved",
+                        key.fingerprint,
+                        key.recovery_file.display(),
+                        key.public_key
+                    );
+                    return Ok(ExitCode::SUCCESS);
+                }
+                Some(KeysCommand::Activate { public_key, saved }) => {
+                    service.activate_encryption_key(&public_key, saved).await?
+                }
+                Some(KeysCommand::Import { file }) => {
+                    service.import_encryption_key(&absolute(&file)?).await?
+                }
+            };
+            match &status.active {
+                Some(fp) => println!("Criptografia ativa — chave {fp}"),
+                None => println!("Criptografia não ativada (syncly keys create <PASTA>)"),
+            }
+            for fp in status
+                .known
+                .iter()
+                .filter(|fp| Some(*fp) != status.active.as_ref())
+            {
+                println!("  chave antiga conhecida: {fp}");
             }
         }
         Command::Google {
@@ -805,7 +873,16 @@ fn print_item(item: &RemoteItem) {
 
 fn delivery_label(delivery: &Delivery, mode: SyncMode) -> String {
     match (delivery, mode) {
-        (Delivery::Archive { format, .. }, _) => format!("compactado .{}", format.extension()),
+        (
+            Delivery::Archive {
+                format, encrypt, ..
+            },
+            _,
+        ) => format!(
+            "compactado .{}{}",
+            format.extension(),
+            if *encrypt { ".age (criptografado)" } else { "" }
+        ),
         (Delivery::Receive { .. }, _) => "recebe".into(),
         (Delivery::Files, SyncMode::Upload) => "envio".into(),
         (Delivery::Files, SyncMode::Mirror) => "espelho".into(),

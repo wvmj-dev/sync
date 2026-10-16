@@ -10,6 +10,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use serde::Serialize;
 
 use super::{ArchiveFormat, ArchiveProgress, CANCELLED, safe_entry_path, temp_sibling};
+use crate::crypto::{self, SecretKey};
 use crate::error::{CoreError, CoreResult, IoContext, ValidationIssue};
 
 const BUF_SIZE: usize = 256 * 1024;
@@ -21,6 +22,9 @@ pub struct ExtractRequest<'a> {
     pub dest: &'a Path,
     /// RN-67: espaço que precisa continuar livre no disco.
     pub reserve_bytes: u64,
+    /// Chaves para abrir um `.age` (RN-73: só lidas para restaurar/receber). Vazio se o
+    /// arquivo não for criptografado.
+    pub keys: &'a [SecretKey],
     pub cancel: &'a AtomicBool,
     pub progress: &'a (dyn Fn(&ArchiveProgress) + Send + Sync),
 }
@@ -47,12 +51,20 @@ pub fn extract(req: &ExtractRequest<'_>) -> CoreResult<ExtractReport> {
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or_default();
-    let Some((format, _)) = ArchiveFormat::detect(file_name) else {
+    let (encrypted, inner) = match crypto::strip_extension(file_name) {
+        Some(inner) => (true, inner),
+        None => (false, file_name),
+    };
+    let Some((format, _)) = ArchiveFormat::detect(inner) else {
         return Err(CoreError::Invalid(vec![ValidationIssue::new(
             "arquivo",
             "formato não suportado — use .zip, .tar, .tar.gz ou .tar.zst",
         )]));
     };
+    // RN-63: o `age` é um fluxo; o ZIP precisa de acesso aleatório.
+    if encrypted && format == ArchiveFormat::Zip {
+        return Err(crypto_error("ZIP criptografado não é suportado".into()));
+    }
     if req.dest.exists() {
         return Err(CoreError::Io {
             path: req.dest.to_path_buf(),
@@ -76,9 +88,21 @@ pub fn extract(req: &ExtractRequest<'_>) -> CoreResult<ExtractReport> {
         progress: ArchiveProgress::default(),
         last_notify: 0,
     };
-    let result = File::open(req.archive)
-        .at(req.archive)
-        .and_then(|file| match format {
+    let result = File::open(req.archive).at(req.archive).and_then(|file| {
+        if encrypted {
+            // Confere a chave antes de ler qualquer conteúdo.
+            let plain =
+                crypto::decrypt_reader(req.keys, BufReader::new(file)).map_err(crypto_error)?;
+            return match format {
+                ArchiveFormat::Tar => sink.tar(plain),
+                ArchiveFormat::TarGz => sink.tar(flate2::read::GzDecoder::new(plain)),
+                _ => {
+                    let decoder = zstd::Decoder::new(plain).at(req.archive)?;
+                    sink.tar(decoder)
+                }
+            };
+        }
+        match format {
             ArchiveFormat::Zip => sink.zip(file),
             ArchiveFormat::Tar => sink.tar(BufReader::new(file)),
             ArchiveFormat::TarGz => sink.tar(flate2::read::GzDecoder::new(BufReader::new(file))),
@@ -86,7 +110,8 @@ pub fn extract(req: &ExtractRequest<'_>) -> CoreResult<ExtractReport> {
                 let decoder = zstd::Decoder::new(file).at(req.archive)?;
                 sink.tar(decoder)
             }
-        });
+        }
+    });
     let mut report = sink.report;
     let published = result.and_then(|()| {
         if req.dest.exists() {
@@ -113,6 +138,10 @@ pub fn extract(req: &ExtractRequest<'_>) -> CoreResult<ExtractReport> {
     }
     report.dest = req.dest.to_path_buf();
     Ok(report)
+}
+
+fn crypto_error(message: String) -> CoreError {
+    CoreError::Invalid(vec![ValidationIssue::new("criptografia", message)])
 }
 
 struct Sink<'a> {
@@ -368,6 +397,7 @@ mod tests {
             output: out,
             format,
             level: None,
+            encrypt: None,
             cancel: &AtomicBool::new(false),
             progress: &|_| {},
         })
@@ -384,6 +414,7 @@ mod tests {
             archive,
             dest,
             reserve_bytes: reserve,
+            keys: &[],
             cancel: &AtomicBool::new(cancel),
             progress: &|_| {},
         })
@@ -426,6 +457,106 @@ mod tests {
         }
     }
 
+    fn sealed(src: &Path, out: &Path, key: &crypto::PublicKey) -> CoreResult<()> {
+        let scanned = scan(src);
+        create(&CreateRequest {
+            scan: &scanned,
+            output: out,
+            format: ArchiveFormat::TarZst,
+            level: None,
+            encrypt: Some(key),
+            cancel: &AtomicBool::new(false),
+            progress: &|_| {},
+        })
+        .map(|_| ())
+    }
+
+    fn open_with(archive: &Path, dest: &Path, keys: &[SecretKey]) -> CoreResult<ExtractReport> {
+        extract(&ExtractRequest {
+            archive,
+            dest,
+            reserve_bytes: 0,
+            keys,
+            cancel: &AtomicBool::new(false),
+            progress: &|_| {},
+        })
+    }
+
+    #[test]
+    fn rn70_rn73_versao_criptografada_so_abre_com_a_chave() {
+        let (tmp, src) = source();
+        let key = SecretKey::generate();
+        let out = tmp.path().join("mundo.tar.zst.age");
+        // RN-73: cifrar só precisa da chave pública.
+        sealed(&src, &out, &key.public()).unwrap();
+        let bytes = fs::read(&out).unwrap();
+        assert!(bytes.starts_with(crypto::MAGIC));
+        assert!(!bytes.windows(6).any(|w| w == "nível".as_bytes()));
+
+        // Sem chave, ou com a chave errada: nada é criado.
+        let dest = tmp.path().join("aberto");
+        let err = open_with(&out, &dest, &[]).unwrap_err();
+        assert!(err.to_string().contains("importe a chave"), "{err}");
+        let err = open_with(&out, &dest, &[SecretKey::generate()]).unwrap_err();
+        assert!(err.to_string().contains("importe a chave"), "{err}");
+        assert!(!dest.exists());
+        assert_eq!(
+            fs::read_dir(tmp.path()).unwrap().count(),
+            2,
+            "sem temporário perdido"
+        );
+
+        // Com a chave (entre outras), abre igual ao original.
+        let report = open_with(&out, &dest, &[SecretKey::generate(), key]).unwrap();
+        assert!(report.skipped.is_empty());
+        assert_eq!(fs::read_to_string(dest.join("level.dat")).unwrap(), "nível");
+        assert_eq!(
+            fs::read(dest.join("region/r.0.mca")).unwrap().len(),
+            300_000
+        );
+    }
+
+    #[test]
+    fn versao_criptografada_adulterada_nao_deixa_nada() {
+        let (tmp, src) = source();
+        let key = SecretKey::generate();
+        let out = tmp.path().join("mundo.tar.zst.age");
+        sealed(&src, &out, &key.public()).unwrap();
+        let mut bytes = fs::read(&out).unwrap();
+        let at = bytes.len() - 100;
+        bytes[at] ^= 0xff;
+        fs::write(&out, bytes).unwrap();
+        let dest = tmp.path().join("aberto");
+        let err = open_with(&out, &dest, &[key]).unwrap_err();
+        assert!(
+            err.to_string().contains("corrompido ou foi alterado"),
+            "{err}"
+        );
+        assert!(!dest.exists());
+    }
+
+    #[test]
+    fn rn63_criptografia_so_em_tar_zst() {
+        let (tmp, src) = source();
+        let key = SecretKey::generate();
+        let scanned = scan(&src);
+        let err = create(&CreateRequest {
+            scan: &scanned,
+            output: &tmp.path().join("x.zip.age"),
+            format: ArchiveFormat::Zip,
+            level: None,
+            encrypt: Some(&key.public()),
+            cancel: &AtomicBool::new(false),
+            progress: &|_| {},
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("TAR.ZST"), "{err}");
+        fs::write(tmp.path().join("y.zip.age"), "x").unwrap();
+        let err =
+            open_with(&tmp.path().join("y.zip.age"), &tmp.path().join("d"), &[key]).unwrap_err();
+        assert!(err.to_string().contains("não é suportado"), "{err}");
+    }
+
     #[test]
     fn rn62_nunca_sobrescreve_o_arquivo_de_saida() {
         let (tmp, src) = source();
@@ -437,6 +568,7 @@ mod tests {
             output: &out,
             format: ArchiveFormat::Zip,
             level: None,
+            encrypt: None,
             cancel: &AtomicBool::new(false),
             progress: &|_| {},
         })

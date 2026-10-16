@@ -143,7 +143,7 @@ Tela **Compactar** e `syncly archive create|extract`.
 - **RN-60** — Ação avulsa "Compactar": até 32 pastas/arquivos → `.zip` (padrão na interface; abre em qualquer sistema), `.tar.gz` (padrão no Linux), `.tar.zst` (mais rápido e menor) ou `.tar` (sem compressão). Tarefas que enviam compactado (RN-50) usam o formato escolhido nelas. Nome padrão: o da única entrada, ou `arquivos`.
 - **RN-61** — Níveis padrão: zstd 3, gzip 6, deflate 6. No `.zip`, arquivos já comprimidos (jpg, png, mp4, zip, gz, 7z…) são armazenados sem recompressão. O bit de execução é preservado.
 - **RN-62** — O arquivo de saída não pode estar dentro das entradas e **nunca sobrescreve** um existente (`nome (2).zip`, `nome (2).tar.gz`…). É escrito num temporário e só ganha o nome final ao terminar — erro ou cancelamento não deixam arquivo pela metade.
-- **RN-63** — Criptografia só para `.tar.zst` (gera `.tar.zst.age`) — fase 2e.
+- **RN-63** — Criptografia só para `.tar.zst` (gera `.tar.zst.age`): o `age` cifra um fluxo, e o ZIP precisa de acesso aleatório. Ligar a criptografia muda o formato para TAR.ZST; escolher outro formato a desliga.
 - **RN-64** — Valem os filtros da sincronização: lixo e temporários (RN-21) ficam de fora; **arquivos sensíveis** (RN-22) só entram se marcados; `.syncignore` é respeitado; links e arquivos especiais não entram; o que não pôde ser lido vira aviso. Se nada sobrar, nada é criado.
 
 ### Descompactar
@@ -152,13 +152,15 @@ Tela **Compactar** e `syncly archive create|extract`.
 - **RN-66** — Arquivos compactados vindos de fora são **entrada não confiável**. Entradas com caminho absoluto, `..`, nomes inválidos, links (simbólicos ou não) e arquivos especiais são **ignoradas** e listadas no resultado. Entradas repetidas não sobrescrevem a primeira. Só o bit de execução é aplicado — setuid/setgid nunca.
 - **RN-67** — Proteção contra "bomba de compressão" e disco cheio: compactar ou descompactar nunca deixa menos de **1 GiB** livre no disco; se fosse deixar, a operação para e nada fica pela metade.
 
-## 9. Criptografia *(planejado — fase 2e)*
+## 9. Criptografia
 
-- **RN-70** — Opcional, por tarefa, aplicada a versões (seção 7) e compactações. A sincronização envia arquivos como estão (para serem visualizáveis no Drive).
-- **RN-71** — Formato `age` com chave X25519. A chave pública fica no `config.toml`; a privada, no keyring.
-- **RN-72** — Ativar criptografia exige **exportar a chave de recuperação** e confirmar que ela foi guardada. Sem ela, as versões criptografadas são irrecuperáveis — o app avisa isso explicitamente.
-- **RN-73** — Versões automáticas usam só a chave pública; a privada só é lida na restauração.
-- **RN-74** — Cada versão registra a impressão digital da chave usada; trocar a chave não invalida versões antigas.
+Preferências → **Criptografia** (CLI: `syncly keys`); por tarefa, **Criptografar as versões**.
+
+- **RN-70** — Opcional, por tarefa, aplicada a versões (seção 7) e às compactações da tela Compactar (`archive create --encrypt`). A sincronização envia arquivos como estão (para serem visualizáveis no Drive), e o envio avulso de pasta compactada (RN-109) também vai sem criptografia.
+- **RN-71** — Formato `age` com chave X25519. A chave pública fica no `config.toml` (`[encryption]`); a privada, no keyring (`age-key:<impressão digital>`). Um `.tar.zst.age` pode ser aberto sem o Syncly, com o programa `age` e o arquivo de recuperação.
+- **RN-72** — Ativar criptografia exige **exportar a chave de recuperação** e confirmar que ela foi guardada. Sem ela, as versões criptografadas são irrecuperáveis — o app avisa isso explicitamente. "Criar chave" grava o arquivo `syncly-chave-<impressão digital>.txt` (`0600`, nunca por cima de outro) direto na pasta escolhida — de preferência um pendrive —, sem a chave passar pela interface; a chave só passa a valer depois de "Guardei o arquivo". **Importar chave** (outro computador, reinstalação) torna a chave ativa se ainda não houver uma.
+- **RN-73** — Versões automáticas usam só a chave pública; a privada só é lida para abrir uma versão criptografada (restaurar, receber, descompactar ou "baixar e descompactar").
+- **RN-74** — Cada versão registra a impressão digital da chave usada; trocar a chave não invalida versões antigas: as chaves anteriores continuam guardadas e são tentadas ao abrir uma versão.
 
 ## 10. Agendamento
 

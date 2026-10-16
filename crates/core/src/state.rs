@@ -125,6 +125,10 @@ const MIGRATIONS: &[&str] = &[
         needs_reconnect_since TEXT NOT NULL
     );
 ",
+    // 6: impressão digital da chave que cifrou cada versão (RN-74); NULL = em claro.
+    r"
+    ALTER TABLE archives ADD COLUMN key_fingerprint TEXT;
+",
 ];
 
 pub struct StateDb {
@@ -147,6 +151,8 @@ pub struct ArchiveRecord {
     /// RN-59: resumo do conteúdo das fontes (caminhos, tamanhos, datas).
     pub fingerprint: String,
     pub created_at: DateTime<Utc>,
+    /// RN-74: impressão digital da chave pública que cifrou a versão (`None` = em claro).
+    pub key_fingerprint: Option<String>,
 }
 
 /// Uma versão recebida por uma tarefa que recebe (RN-107).
@@ -186,7 +192,7 @@ fn parse_ts(s: &str) -> rusqlite::Result<DateTime<Utc>> {
 }
 
 const ARCHIVE_COLUMNS: &str = "id, job_id, account_id, dest_path, remote_id, name, format, size, \
-     hash, fingerprint, created_at";
+     hash, fingerprint, created_at, key_fingerprint";
 
 fn archive_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<ArchiveRecord> {
     let id: String = r.get(0)?;
@@ -205,6 +211,7 @@ fn archive_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<ArchiveRecord> {
         hash: r.get(8)?,
         fingerprint: r.get(9)?,
         created_at: parse_ts(&created)?,
+        key_fingerprint: r.get(11)?,
     })
 }
 
@@ -427,8 +434,9 @@ impl StateDb {
     pub fn insert_archive(&self, r: &ArchiveRecord) -> CoreResult<()> {
         self.conn.execute(
             "INSERT INTO archives
-               (id, job_id, account_id, dest_path, remote_id, name, format, size, hash, fingerprint, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+               (id, job_id, account_id, dest_path, remote_id, name, format, size, hash, fingerprint,
+                created_at, key_fingerprint)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 r.id.to_string(),
                 r.job_id.to_string(),
@@ -441,6 +449,7 @@ impl StateDb {
                 r.hash,
                 r.fingerprint,
                 ts(r.created_at),
+                r.key_fingerprint,
             ],
         )?;
         Ok(())
@@ -798,12 +807,23 @@ mod tests {
             hash: Some("h".into()),
             fingerprint: "f".into(),
             created_at: Utc::now() - chrono::Duration::minutes(minutes),
+            key_fingerprint: None,
         };
         let old = record("velha", 60);
         db.insert_archive(&old).unwrap();
-        db.insert_archive(&record("nova", 1)).unwrap();
+        // RN-74: a versão criptografada lembra qual chave a cifrou.
+        let sealed = ArchiveRecord {
+            key_fingerprint: Some("0123456789abcdef".into()),
+            ..record("nova", 1)
+        };
+        db.insert_archive(&sealed).unwrap();
         let listed = db.list_archives(job, account, "Backups").unwrap();
         assert_eq!(listed[0].name, "nova");
+        assert_eq!(
+            listed[0].key_fingerprint.as_deref(),
+            Some("0123456789abcdef")
+        );
+        assert_eq!(listed[1].key_fingerprint, None);
         assert_eq!(listed.len(), 2);
         // Outro destino não se mistura.
         assert!(db.list_archives(job, account, "Outra").unwrap().is_empty());

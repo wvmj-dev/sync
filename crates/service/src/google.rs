@@ -72,7 +72,7 @@ impl Service {
             .map_err(ServiceError::Keyring)
     }
 
-    async fn secret_set(&self, key: String, value: String) -> ServiceResult<()> {
+    pub(crate) async fn secret_set(&self, key: String, value: String) -> ServiceResult<()> {
         let store = self.secrets.clone();
         tokio::task::spawn_blocking(move || store.set(&key, &value))
             .await

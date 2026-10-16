@@ -16,9 +16,10 @@ pub struct VersionStamp {
     pub seq: u32,
 }
 
-/// RN-107: reconhece `<tarefa>_AAAA-MM-DD_HH-MM-SS[ (n)].<ext>` (RN-50). Qualquer outro
-/// nome não é uma versão — fica de fora do recebimento.
+/// RN-107: reconhece `<tarefa>_AAAA-MM-DD_HH-MM-SS[ (n)].<ext>[.age]` (RN-50, RN-63).
+/// Qualquer outro nome não é uma versão — fica de fora do recebimento.
 pub fn parse_version_name(name: &str) -> Option<(VersionStamp, ArchiveFormat)> {
+    let name = crate::crypto::strip_extension(name).unwrap_or(name);
     let (format, stem) = ArchiveFormat::detect(name)?;
     let (stem, seq) = match stem.strip_suffix(')').and_then(|s| s.rsplit_once(" (")) {
         Some((base, n)) => (base, n.parse::<u32>().ok().filter(|n| *n >= 2)?),
@@ -53,13 +54,14 @@ pub fn latest_version(entries: &[RemoteEntry]) -> Result<Option<&RemoteEntry>, S
     }
 }
 
-/// RN-50: `<tarefa>_AAAA-MM-DD_HH-MM-SS.<ext>`, na hora local. Caracteres que não podem
-/// ir num nome de arquivo viram `_`. Se o nome já estiver em uso no destino (`taken`),
-/// acrescenta ` (2)`, ` (3)`… — nunca sobrescreve.
+/// RN-50: `<tarefa>_AAAA-MM-DD_HH-MM-SS.<ext>`, na hora local; criptografada, com `.age`
+/// no fim (RN-63). Caracteres que não podem ir num nome de arquivo viram `_`. Se o nome já
+/// estiver em uso no destino (`taken`), acrescenta ` (2)`, ` (3)`… — nunca sobrescreve.
 pub fn version_name(
     job_name: &str,
     at: NaiveDateTime,
     format: ArchiveFormat,
+    encrypted: bool,
     taken: impl Fn(&str) -> bool,
 ) -> String {
     let clean: String = job_name
@@ -77,7 +79,11 @@ pub fn version_name(
     let clean = clean.trim_start_matches('.');
     let base = if clean.is_empty() { "tarefa" } else { clean };
     let stamp = at.format("%Y-%m-%d_%H-%M-%S");
-    let ext = format.extension();
+    let ext = if encrypted {
+        format!("{}.{}", format.extension(), crate::crypto::EXTENSION)
+    } else {
+        format.extension().to_string()
+    };
     let mut stem = format!("{base}_{stamp}");
     if validate_name(&format!("{stem}.{ext}")).is_err() {
         stem = format!("tarefa_{stamp}");
@@ -127,16 +133,25 @@ mod tests {
     fn rn50_nome_da_versao() {
         let free = |_: &str| false;
         assert_eq!(
-            version_name("Mundo", at(), ArchiveFormat::TarZst, free),
+            version_name("Mundo", at(), ArchiveFormat::TarZst, false, free),
             "Mundo_2026-10-14_02-00-05.tar.zst"
         );
         assert_eq!(
-            version_name("a/b\\c", at(), ArchiveFormat::Zip, free),
+            version_name("a/b\\c", at(), ArchiveFormat::Zip, false, free),
             "a_b_c_2026-10-14_02-00-05.zip"
         );
         assert_eq!(
-            version_name("..", at(), ArchiveFormat::Tar, free),
+            version_name("..", at(), ArchiveFormat::Tar, false, free),
             "tarefa_2026-10-14_02-00-05.tar"
+        );
+        // RN-63: criptografada leva `.age`, e continua sendo reconhecida como versão.
+        let sealed = version_name("Mundo", at(), ArchiveFormat::TarZst, true, free);
+        assert_eq!(sealed, "Mundo_2026-10-14_02-00-05.tar.zst.age");
+        let (stamp, format) = parse_version_name(&sealed).unwrap();
+        assert_eq!((stamp.at, format), (at(), ArchiveFormat::TarZst));
+        assert_eq!(
+            version_name("Mundo", at(), ArchiveFormat::TarZst, true, |n| n == sealed),
+            "Mundo_2026-10-14_02-00-05 (2).tar.zst.age"
         );
         // Nunca sobrescreve: nomes em uso ganham sufixo.
         let used = [
@@ -144,7 +159,8 @@ mod tests {
             "Mundo_2026-10-14_02-00-05 (2).zip",
         ];
         assert_eq!(
-            version_name("Mundo", at(), ArchiveFormat::Zip, |n| used.contains(&n)),
+            version_name("Mundo", at(), ArchiveFormat::Zip, false, |n| used
+                .contains(&n)),
             "Mundo_2026-10-14_02-00-05 (3).zip"
         );
     }
@@ -194,7 +210,7 @@ mod tests {
         let (stamp, _) = parse_version_name("Meu mundo_2026-10-14_02-00-05 (3).zip").unwrap();
         assert_eq!(stamp.seq, 3);
         // O que o próprio app gera é sempre reconhecido.
-        let name = version_name("Mundo", at(), ArchiveFormat::TarGz, |_| false);
+        let name = version_name("Mundo", at(), ArchiveFormat::TarGz, false, |_| false);
         assert!(parse_version_name(&name).is_some());
         for other in [
             "Mundo.zip",

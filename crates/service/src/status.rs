@@ -275,6 +275,7 @@ mod tests {
     #[tokio::test]
     async fn compactada_nao_tem_status_por_arquivo() {
         let s = setup(Delivery::Archive {
+            encrypt: false,
             format: syncly_core::archive::ArchiveFormat::Zip,
             retention: Retention::default(),
         });

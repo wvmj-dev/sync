@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { RouterLink } from "vue-router";
 import { api, errorMessage, onArchiveProgress, pickArchive, pickFiles, pickFolder } from "../api";
 import type { ArchiveFormat, ArchiveProgress, CompressResult, ExtractResult } from "../api/types";
 import Icon from "../components/Icon.vue";
@@ -12,6 +13,15 @@ const format = ref<ArchiveFormat>("zip");
 const name = ref("");
 const outputDir = ref<string | null>(null);
 const includeSensitive = ref(false);
+/** RN-70: só com a chave ativa e em TAR.ZST (RN-63). */
+const encrypt = ref(false);
+const keyActive = ref(false);
+watch(encrypt, (on) => {
+  if (on) format.value = "tar_zst";
+});
+watch(format, (f) => {
+  if (f !== "tar_zst") encrypt.value = false;
+});
 const compressed = ref<CompressResult | null>(null);
 
 // Descompactar
@@ -27,6 +37,11 @@ const error = ref<string | null>(null);
 let stopListening: (() => void) | null = null;
 onMounted(async () => {
   stopListening = await onArchiveProgress((p) => (progress.value = p));
+  try {
+    keyActive.value = (await api.encryptionStatus()).active !== null;
+  } catch {
+    keyActive.value = false;
+  }
 });
 onUnmounted(() => stopListening?.());
 
@@ -98,6 +113,7 @@ async function compress() {
       name: name.value.trim() || null,
       format: format.value,
       includeSensitive: includeSensitive.value,
+      encrypt: encrypt.value,
     }),
   );
 }
@@ -207,6 +223,17 @@ async function extract() {
         <input v-model="includeSensitive" class="switch" type="checkbox" role="switch" />
       </label>
 
+      <label class="field switch-field">
+        <span>
+          <span class="label">Criptografar</span>
+          <span v-if="keyActive" class="hint">Gera <code>.tar.zst.age</code>; para abrir, é preciso a chave.</span>
+          <span v-else class="hint">
+            Crie a chave antes em <RouterLink to="/preferencias">Preferências → Criptografia</RouterLink>.
+          </span>
+        </span>
+        <input v-model="encrypt" class="switch" type="checkbox" role="switch" :disabled="!keyActive" />
+      </label>
+
       <div class="row end">
         <button
           class="btn btn-primary"
@@ -240,7 +267,7 @@ async function extract() {
       <div>
         <h2>Descompactar um arquivo</h2>
         <p class="section-desc">
-          .zip, .tar, .tar.gz e .tar.zst. O conteúdo vai sempre para uma pasta nova; entradas
+          .zip, .tar, .tar.gz, .tar.zst e .tar.zst.age (com a chave). O conteúdo vai sempre para uma pasta nova; entradas
           perigosas de arquivos baixados da internet são ignoradas.
         </p>
       </div>

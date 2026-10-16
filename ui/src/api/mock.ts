@@ -5,6 +5,7 @@ import type {
   AccountSummary,
   Appearance,
   AppInfo,
+  EncryptionStatus,
   JobStatus,
   JobSummary,
   PlanPreview,
@@ -172,8 +173,8 @@ const status: JobStatus = {
 };
 
 const versions: VersionItem[] = [
-  { id: "v1", name: "Fotos_2026-10-11_03-00-04.tar.zst", size: 2_100_000_000, createdAt: hoursAgo(30), accountId: "a2", accountLabel: "HD externo", path: "Backups/Fotos" },
-  { id: "v2", name: "Fotos_2026-10-04_03-00-02.tar.zst", size: 2_050_000_000, createdAt: hoursAgo(198), accountId: "a2", accountLabel: "HD externo", path: "Backups/Fotos" },
+  { id: "v1", name: "Fotos_2026-10-11_03-00-04.tar.zst", size: 2_100_000_000, createdAt: hoursAgo(30), accountId: "a2", accountLabel: "HD externo", path: "Backups/Fotos", keyFingerprint: null },
+  { id: "v2", name: "Fotos_2026-10-04_03-00-02.tar.zst", size: 2_050_000_000, createdAt: hoursAgo(198), accountId: "a2", accountLabel: "HD externo", path: "Backups/Fotos", keyFingerprint: null },
 ];
 
 const remote: RemoteItem[] = [
@@ -193,8 +194,23 @@ function appearance(): Appearance {
 
 let preferences: Preferences = { notify: "failures", minFreeSpaceMib: 1024, maxParallelTransfers: 4 };
 
+const MOCK_KEY = "3f9a1c0b7d2e4a65";
+let encryption: EncryptionStatus = { active: null, known: [] };
+
+/** `?mock&encrypted`: chave ativa e versões de "Fotos" criptografadas (RN-70, RN-74). */
+if (new URLSearchParams(location.search).has("encrypted")) {
+  encryption = { active: MOCK_KEY, known: [MOCK_KEY, "9b04e7d1c2a35f80"] };
+  const fotos = jobs.find((j) => j.id === "j2");
+  if (fotos?.sync?.delivery.kind === "archive") fotos.sync.delivery.encrypt = true;
+  for (const v of versions) {
+    v.name += ".age";
+    v.keyFingerprint = v.id === "v1" ? MOCK_KEY : "9b04e7d1c2a35f80";
+  }
+}
+
 const responses: Record<string, () => unknown> = {
   get_preferences: () => preferences,
+  encryption_status: () => encryption,
   system_appearance: appearance,
   app_info: () => info,
   list_accounts: () => accounts,
@@ -242,6 +258,27 @@ export async function mockCall<T>(command: string, args?: Record<string, unknown
     const item: RemoteItem = { name, path: parent ? `${parent}/${name}` : name, kind: "folder", size: null, modifiedAt: new Date().toISOString(), modifiedBy: "Você", downloadable: false };
     if (!parent) remote.unshift(item);
     return item as T;
+  }
+  if (command === "create_encryption_key") {
+    const folder = (args?.folder as string) ?? "/tmp";
+    return {
+      fingerprint: MOCK_KEY,
+      publicKey: "age1demonstracao0000000000000000000000000000000000000000000",
+      recoveryFile: `${folder}/syncly-chave-${MOCK_KEY}.txt`,
+    } as T;
+  }
+  if (command === "activate_encryption_key") {
+    if (!args?.saved) throw new Error("confirme que guardou a chave de recuperação");
+    encryption = { active: MOCK_KEY, known: [MOCK_KEY, ...encryption.known.filter((k) => k !== MOCK_KEY)] };
+    return encryption as T;
+  }
+  if (command === "import_encryption_key") {
+    const imported = "9b04e7d1c2a35f80";
+    encryption = {
+      active: encryption.active ?? imported,
+      known: [...new Set([...encryption.known, imported])],
+    };
+    return encryption as T;
   }
   if (command === "save_preferences") {
     preferences = args?.preferences as Preferences;

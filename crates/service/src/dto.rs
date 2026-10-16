@@ -279,6 +279,30 @@ pub struct VersionItem {
     pub account_label: Option<String>,
     /// Pasta no destino, relativa à raiz do app.
     pub path: String,
+    /// RN-74: impressão digital da chave que cifrou a versão (`None` = em claro).
+    pub key_fingerprint: Option<String>,
+}
+
+/// RN-71 a RN-74: situação da criptografia. Só impressões digitais e a chave pública —
+/// a privada nunca sai do Rust (SEG-04).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EncryptionStatus {
+    /// Chave das novas versões (`None` = criptografia não ativada).
+    pub active: Option<String>,
+    /// Impressões digitais de todas as chaves deste computador, a atual primeiro.
+    pub known: Vec<String>,
+}
+
+/// Chave criada e já guardada no keyring e no arquivo de recuperação, mas ainda não
+/// ativa: falta o usuário confirmar que guardou o arquivo (RN-72).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewEncryptionKey {
+    pub fingerprint: String,
+    /// `age1…` — pública, pode ir para a interface.
+    pub public_key: String,
+    pub recovery_file: PathBuf,
 }
 
 /// "Enviar compactado" avulso (RN-109): compacta e envia um único arquivo.

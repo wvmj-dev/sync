@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { api, errorMessage } from "../api";
-import type { NotifyPolicy, Preferences } from "../api/types";
+import { api, errorMessage, pickFile, pickFolder } from "../api";
+import type { EncryptionStatus, NewEncryptionKey, NotifyPolicy, Preferences } from "../api/types";
 import Notice from "../components/Notice.vue";
+import { plural } from "../utils/format";
 
 const saved = ref<Preferences | null>(null);
 const notify = ref<NotifyPolicy>("failures");
@@ -68,9 +69,74 @@ async function save() {
   }
 }
 
+// ---- Criptografia (RN-70 a RN-74). A chave privada nunca chega aqui. ----
+const crypto = ref<EncryptionStatus | null>(null);
+/** Chave criada e gravada, esperando a confirmação de que o arquivo foi guardado (RN-72). */
+const pending = ref<NewEncryptionKey | null>(null);
+const keySaved = ref(false);
+const cryptoBusy = ref(false);
+const cryptoNotice = ref<{ kind: "ok" | "danger"; text: string } | null>(null);
+const oldKeys = computed(() => crypto.value?.known.filter((k) => k !== crypto.value?.active) ?? []);
+
+/** "3f9a1c0b7d2e4a65" → "3f9a 1c0b 7d2e 4a65": mais fácil de conferir com o arquivo. */
+function groups(fingerprint: string): string {
+  return fingerprint.match(/.{1,4}/g)?.join(" ") ?? fingerprint;
+}
+
+async function cryptoAction(op: () => Promise<void>) {
+  cryptoBusy.value = true;
+  cryptoNotice.value = null;
+  try {
+    await op();
+  } catch (e) {
+    cryptoNotice.value = { kind: "danger", text: errorMessage(e) };
+  } finally {
+    cryptoBusy.value = false;
+  }
+}
+
+async function createKey() {
+  const folder = await pickFolder("Onde salvar a chave de recuperação (de preferência um pendrive)");
+  if (!folder) return;
+  await cryptoAction(async () => {
+    pending.value = await api.createEncryptionKey(folder);
+    keySaved.value = false;
+  });
+}
+
+async function activateKey() {
+  const key = pending.value;
+  if (!key) return;
+  await cryptoAction(async () => {
+    crypto.value = await api.activateEncryptionKey(key.publicKey, keySaved.value);
+    pending.value = null;
+    cryptoNotice.value = {
+      kind: "ok",
+      text: "Criptografia ativa. Ligue-a nas tarefas compactadas em TAR.ZST.",
+    };
+  });
+}
+
+async function importKey() {
+  const file = await pickFile("Arquivo de recuperação da chave (syncly-chave-….txt)");
+  if (!file) return;
+  await cryptoAction(async () => {
+    const before = crypto.value?.active ?? null;
+    crypto.value = await api.importEncryptionKey(file);
+    cryptoNotice.value = {
+      kind: "ok",
+      text:
+        before === null && crypto.value.active
+          ? "Chave importada e ativa."
+          : "Chave importada: as versões feitas com ela voltam a abrir neste computador.",
+    };
+  });
+}
+
 onMounted(async () => {
   try {
     apply(await api.getPreferences());
+    crypto.value = await api.encryptionStatus();
   } catch (e) {
     notice.value = { kind: "danger", text: errorMessage(e) };
   }
@@ -141,6 +207,79 @@ onMounted(async () => {
       </button>
     </div>
   </form>
+
+  <section v-if="crypto" class="section" aria-labelledby="crypto-title">
+    <div class="section-head">
+      <div>
+        <h2 id="crypto-title">Criptografia</h2>
+        <p class="section-desc">
+          Cifra as versões compactadas no computador, antes do envio: no destino ficam só dados
+          ilegíveis. Vale para tarefas e compactações em TAR.ZST.
+        </p>
+      </div>
+    </div>
+
+    <div class="boxed pad stack">
+      <template v-if="pending">
+        <div>
+          <p><strong>Chave criada.</strong> O arquivo de recuperação foi salvo em:</p>
+          <p class="path">{{ pending.recoveryFile }}</p>
+        </div>
+        <Notice kind="warn">
+          Sem esse arquivo, as versões criptografadas não podem ser abertas — nem pelo Syncly.
+          Copie-o para fora deste computador (pendrive, gerenciador de senhas) antes de ativar.
+        </Notice>
+        <label class="field switch-field">
+          <span class="label">Guardei o arquivo de recuperação fora deste computador</span>
+          <input v-model="keySaved" class="switch" type="checkbox" role="switch" />
+        </label>
+        <div class="row end">
+          <button class="btn btn-flat" type="button" :disabled="cryptoBusy" @click="pending = null">
+            Agora não
+          </button>
+          <button class="btn btn-primary" type="button" :disabled="!keySaved || cryptoBusy" @click="activateKey">
+            Ativar criptografia
+          </button>
+        </div>
+      </template>
+
+      <template v-else>
+        <dl class="facts">
+          <div>
+            <dt>Chave das novas versões</dt>
+            <dd v-if="crypto.active" class="num">{{ groups(crypto.active) }}</dd>
+            <dd v-else class="muted">Nenhuma — as versões vão sem criptografia</dd>
+          </div>
+          <div v-if="oldKeys.length">
+            <dt>Chaves antigas</dt>
+            <dd>{{ plural(oldKeys.length, "chave", "chaves") }} para abrir versões anteriores</dd>
+          </div>
+        </dl>
+        <p v-if="crypto.active" class="muted small">
+          Trocar de chave vale para as próximas versões; as anteriores continuam abrindo com a
+          chave antiga, que fica guardada neste computador.
+        </p>
+        <div class="row end">
+          <button class="btn btn-flat" type="button" :disabled="cryptoBusy" @click="importKey">
+            Importar chave…
+          </button>
+          <button
+            class="btn"
+            :class="{ 'btn-primary': !crypto.active }"
+            type="button"
+            :disabled="cryptoBusy"
+            @click="createKey"
+          >
+            {{ crypto.active ? "Trocar de chave…" : "Criar chave…" }}
+          </button>
+        </div>
+      </template>
+    </div>
+
+    <Notice v-if="cryptoNotice" :kind="cryptoNotice.kind" dismissible @close="cryptoNotice = null">
+      {{ cryptoNotice.text }}
+    </Notice>
+  </section>
 </template>
 
 <style scoped>

@@ -9,8 +9,7 @@ use std::time::Instant;
 
 use chrono::Utc;
 use syncly_core::CoreError;
-use syncly_core::archive::{ArchiveFormat, latest_version};
-use syncly_core::domain::rel_path::validate_name;
+use syncly_core::archive::latest_version;
 use syncly_core::domain::{PlanStats, RunKind, RunStatus};
 use syncly_core::provider::{RemoteEntry, StorageProvider};
 use syncly_core::state::ReceivedRecord;
@@ -19,7 +18,7 @@ use syncly_core::sync::guard::{self, GuardVerdict, ReceiveGuardInput};
 use syncly_core::sync::remote_tree::resolve_path;
 use uuid::Uuid;
 
-use crate::archive::ensure_space;
+use crate::archive::{ArchiveName, ensure_space};
 use crate::dto::{PlanPreview, ReceivePreview, ReceiveRun, RunReport};
 use crate::error::{ServiceError, ServiceResult};
 use crate::restore::{RemoteFile, Target, fetch_and_extract};
@@ -163,14 +162,9 @@ impl Service {
             state.finish_run(run, RunStatus::Aborted, None, Some(&e.to_string()))?;
             return Err(e);
         }
-        let (format, stem) = ArchiveFormat::detect(&latest.name)
-            .map(|(f, s)| (f, s.to_string()))
-            .ok_or_else(|| ServiceError::Internal("versão sem formato conhecido".into()))?;
-        let stem = if validate_name(&stem).is_ok() {
-            stem
-        } else {
-            "recebido".to_string()
-        };
+        let name = ArchiveName::parse(&latest.name, "recebido")?;
+        // RN-73: a chave privada só é lida se a versão for criptografada.
+        let keys = self.keys_for(&latest.name).await?;
 
         let run_id = state.start_run(id, RunKind::Receive, trigger)?;
         tracing::info!(job = %id, "recebimento iniciado");
@@ -184,14 +178,15 @@ impl Service {
         // RN-57, RN-107: sempre numa pasta nova, nunca por cima.
         let target = Target {
             dir: &p.target,
-            stem: &stem,
-            format,
+            stem: &name.stem,
+            extension: name.extension(),
         };
         let result = fetch_and_extract(
             p.provider.as_ref(),
             &file,
             &staging,
             &target,
+            keys,
             exec.cancel,
             exec.progress,
         )

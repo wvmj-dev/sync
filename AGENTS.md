@@ -8,11 +8,11 @@ detalhado fica em [`.agents/`](.agents/README.md) e deve ser lido **sob demanda*
 
 App desktop para sincronizar e fazer backup de pastas com o Google Drive (outros
 provedores depois). Tauri 2 + Rust (núcleo) + Vue 3/TypeScript (UI) + CLI `syncly`.
-Fases concluídas: **0, 1a a 1c, 2a a 2d e 3a** — sincronização (Drive e pasta local), status
+Fases concluídas: **0, 1a a 1c, 2a a 2e e 3a** — sincronização (Drive e pasta local), status
 por arquivo, transferências avulsas, compactação, envio compactado com versões (backup),
-restauração, recebimento e agendamento (systemd + notificações) funcionando. Próxima:
-**2e** (criptografia). A bandeja (3b) saiu do plano e a fase 4 está adiada. Roadmap em
-`docs/ARQUITETURA.md` §13.
+criptografia das versões, restauração, recebimento e agendamento (systemd + notificações)
+funcionando. Falta da 2e o manifesto das versões. A bandeja (3b) saiu do plano e a fase 4
+está adiada. Roadmap em `docs/ARQUITETURA.md` §13.
 
 Fonte da verdade — leia antes de mudar comportamento:
 
@@ -24,7 +24,7 @@ Fonte da verdade — leia antes de mudar comportamento:
 
 Não presuma que algo existe só porque está nos docs — os docs descrevem o projeto completo.
 
-| Já funciona (fases 0, 1a a 1c, 2a a 2d e 3a) | Ainda **não** existe |
+| Já funciona (fases 0, 1a a 1c, 2a a 2e e 3a) | Ainda **não** existe |
 |---|---|
 | Domínio e validações; **executor** (`sync/executor.rs`) com progresso, cancelamento e histórico (limitado, RN-93) | |
 | Varredura local com filtros, `.syncignore`, bloqueios e exclusões | Testar o recebimento entre dois computadores (RN-107) |
@@ -33,7 +33,8 @@ Não presuma que algo existe só porque está nos docs — os docs descrevem o p
 | `LocalProvider` (cache de hashes em `.syncly-cache/`) e `GDriveProvider` (Drive: OAuth PKCE, keyring, limitador, retry, envio retomável); listagem do destino em paralelo | Changes API, download/bidirecional (fase 4, adiada: mantém `drive.file`) |
 | **Prévia** de sincronização (CLI e UI); enviar/listar/baixar arquivos avulsos e criar pasta (`syncly remote`, tela Arquivos) | |
 | Compactar/descompactar zip e tar (`core/src/archive/`, `syncly archive`, tela Compactar) | |
-| **Envio compactado** (`Delivery::Archive`, `service/src/delivery.rs`): versões com data, retenção, pula se nada mudou | Criptografia, manifesto |
+| **Envio compactado** (`Delivery::Archive`, `service/src/delivery.rs`): versões com data, retenção, pula se nada mudou | Manifesto das versões |
+| **Criptografia** `age` das versões e da tela Compactar (`core/src/crypto.rs`, `service/src/encryption.rs`; `syncly keys`; Preferências → Criptografia) | |
 | **Restaurar versão** (`service/src/restore.rs`, `syncly versions`/`restore`, tela Tarefas → Versões) | |
 | **Receber** (`Delivery::Receive`, `service/src/receive.rs`); avulsos "baixar e descompactar" e "enviar pasta compactada" (`transfers.rs`, `remote get --extract`/`put --compress`) | |
 | **Agendamento** (`core/src/timers.rs` puro, `service/src/schedule.rs`, `os.rs`; `syncly schedule`; modo sem janela `syncly-desktop run <id> --scheduled`) e notificações D-Bus (RN-94); **adiar** sem rede/keyring com nova tentativa pelo systemd (RN-84) | |
@@ -73,7 +74,8 @@ cargo run -p syncly-cli -- preview <tarefa>
 cargo run -p syncly-cli -- run <tarefa> [--confirm]     # executa de verdade
 cargo run -p syncly-cli -- google connect               # abre o navegador (conta real!)
 cargo run -p syncly-cli -- remote ls|mkdir|put|get …    # arquivos avulsos em Syncly/
-cargo run -p syncly-cli -- archive create|extract …     # zip, tar, tar.gz, tar.zst
+cargo run -p syncly-cli -- archive create|extract …     # zip, tar, tar.gz, tar.zst[.age]
+cargo run -p syncly-cli -- keys [create|activate|import] # chave da criptografia (keyring real!)
 cargo run -p syncly-cli -- schedule                     # atualiza os timers (systemd real!)
 cargo run -p syncly-cli -- status <tarefa> [pasta] [--remote]   # situação e última modificação
 ```

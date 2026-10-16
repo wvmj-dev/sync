@@ -535,9 +535,13 @@ impl Service {
         let started = Instant::now();
         let loaded = self.load_job(id)?;
         match loaded.sync.delivery.clone() {
-            Delivery::Archive { format, retention } => {
+            Delivery::Archive {
+                format,
+                retention,
+                encrypt,
+            } => {
                 return self
-                    .preview_archive(loaded, format, retention, started)
+                    .preview_archive(loaded, format, retention, encrypt, started)
                     .await;
             }
             Delivery::Receive { target } => {
@@ -678,10 +682,20 @@ impl Service {
             return Err(ServiceError::Invalid("a tarefa está desativada".into()));
         }
         match loaded.sync.delivery.clone() {
-            Delivery::Archive { format, retention } => {
+            Delivery::Archive {
+                format,
+                retention,
+                encrypt,
+            } => {
+                // RN-73: só a chave pública — o keyring nem é aberto.
+                let encrypt = match encrypt {
+                    true => Some(self.encryption_public_key()?),
+                    false => None,
+                };
                 let exec = ArchiveExec {
                     format,
                     retention,
+                    encrypt,
                     options,
                     cancel: &cancel,
                     progress: &progress,
