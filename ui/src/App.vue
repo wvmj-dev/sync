@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted } from "vue";
 import { RouterLink, RouterView } from "vue-router";
+import logo from "./assets/syncly.svg";
 import Icon from "./components/Icon.vue";
 import type { IconName } from "./components/icons";
 import Notice from "./components/Notice.vue";
@@ -23,7 +24,7 @@ const links: { to: string; label: string; icon: IconName }[] = [
   <div class="shell">
     <aside class="sidebar">
       <div class="brand">
-        <span class="brand-mark" aria-hidden="true"><Icon name="sync" :size="18" /></span>
+        <img class="brand-logo" :src="logo" alt="" width="30" height="30" />
         <span>Syncly</span>
       </div>
       <nav class="nav" aria-label="Seções">

@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <!-- Ícone do Syncly: pasta no estilo GNOME/Orchis com o laço de sincronizar.
+       Fonte única: `pnpm tauri icon ui/src/assets/syncly.svg` gera os ícones do app. -->
+  <path fill="#1557B0" d="M22 14h24c4 0 6.5 1.4 9 4.4l4 4.8c1.6 1.9 3.2 2.8 5.8 2.8H106a10 10 0 0 1 10 10v64H12V24a10 10 0 0 1 10-10z"/>
+  <rect x="12" y="40" width="104" height="76" rx="10" fill="#0F4A99"/>
+  <rect x="12" y="36" width="104" height="74" rx="10" fill="#5B9BF0"/>
+  <rect x="12" y="38" width="104" height="72" rx="10" fill="#1A73E8"/>
+  <g fill="none" stroke="#FFFFFF" stroke-width="8" stroke-linecap="round">
+    <path d="M44.27 65.82A21 21 0 0 1 81.2 60.95"/>
+    <path d="M83.73 80.18A21 21 0 0 1 46.8 85.05"/>
+  </g>
+  <g fill="#FFFFFF">
+    <path d="M73.83 66.12L88.58 55.79L84.92 71.17z"/>
+    <path d="M54.17 79.88L39.42 90.21L43.08 74.83z"/>
+  </g>
+</svg>

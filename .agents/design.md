@@ -51,6 +51,15 @@ Escala de tipo: 13 / 15 / 17 / 24–28px; pesos 400, 500 (botões e títulos de 
 | Tabela | `.table-wrap` + `.table` | dados com colunas |
 | Ícones | componente `Icon` (`ui/src/components/icons.ts`) | traço 1,75, 24×24; para ícone novo, desenhe no mesmo estilo |
 
+## Ícone do app
+
+Fonte única: `ui/src/assets/syncly.svg` — pasta no estilo GNOME/Orchis (aba, fundo, frente
+com borda mais escura embaixo) com o laço de sincronizar, grade de 128. A barra lateral usa
+o mesmo arquivo. Mudou o desenho? Gere os PNG/ICO/ICNS com
+`pnpm tauri icon ui/src/assets/syncly.svg -o /tmp/icones` e copie para `src-tauri/icons/` só os
+arquivos que já existem lá (as pastas `android/` e `ios/` não são usadas). Confira em 16, 32
+e 64 px, sobre fundo claro e escuro.
+
 ## Regras
 
 - **Nada de genérico de IA:** sem quadros "número grande + legenda", sem rótulos em CAIXA
