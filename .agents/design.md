@@ -71,8 +71,11 @@ e 64 px, sobre fundo claro e escuro.
   ("Criar tarefa", não "Enviar"). Erro explica o que houve e como resolver.
 - **Acessibilidade:** foco visível (já global), `aria-label` em botão só de ícone, contraste
   dos tokens, `prefers-reduced-motion` respeitado. Movimento só no progresso.
+- **Layout:** o conteúdo (`.main`, até 1040px) fica centralizado na área à direita do menu,
+  em qualquer largura de janela. O menu lateral pode ser recolhido (só ícones, 72px; o nome
+  vira dica e continua para leitores de tela); a escolha fica salva no navegador.
 - **Telas estreitas (e, no futuro, o celular):** abaixo de 760px a barra lateral vira barra
-  superior; confira que nada estoura a largura.
+  superior (sem o botão de recolher); confira que nada estoura a largura.
 - **Segurança:** a CSP não permite estilo inline no HTML nem imagens `data:` no CSS —
   tamanho e cor dinâmicos só por `:style` (vira CSSOM) ou variável CSS. `v-html` proibido.
 

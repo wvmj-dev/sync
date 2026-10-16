@@ -42,6 +42,10 @@ const shots = [
   { name: "23-criptografia-ativa-escuro", theme: "dark", route: "/preferencias", query: "&encrypted", height: 1250 },
   { name: "24-versoes-criptografadas-claro", theme: "light", route: "/tarefas", query: "&encrypted", click: ["Versões"] },
   { name: "25-compactar-criptografia-escuro", theme: "dark", route: "/compactar", query: "&encrypted", height: 1000 },
+  // Por último: o menu recolhido fica salvo no navegador das capturas seguintes.
+  { name: "26-tela-cheia-claro", theme: "light", route: "/", width: 1920, height: 1080 },
+  { name: "27-tela-cheia-recolhido-escuro", theme: "dark", route: "/tarefas", click: ["Recolher menu"], width: 1920, height: 1080 },
+  { name: "28-recolhido-claro", theme: "light", route: "/preferencias", click: ["Recolher menu"] },
 ];
 
 const profile = mkdtempSync(join(tmpdir(), "syncly-shots-"));
