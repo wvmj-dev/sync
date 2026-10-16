@@ -251,10 +251,13 @@ async function download(item: RemoteItem) {
       </span>
     </div>
 
-    <Notice v-if="notice" :kind="notice.kind === 'warning' ? 'warn' : notice.kind" dismissible @close="notice = null">
-      {{ notice.text }}
-    </Notice>
+    <Transition name="slide">
+      <Notice v-if="notice" :kind="notice.kind === 'warning' ? 'warn' : notice.kind" dismissible @close="notice = null">
+        {{ notice.text }}
+      </Notice>
+    </Transition>
 
+    <Transition name="slide">
     <section v-if="packing" class="boxed pad run" aria-live="polite">
       <div class="run-head">
         <strong>{{ busy }}</strong>
@@ -272,7 +275,8 @@ async function download(item: RemoteItem) {
       </p>
       <p v-if="progress?.current" class="path ellipsis">{{ progress.current }}</p>
     </section>
-    <p v-else-if="busy" class="muted">{{ busy }}</p>
+    </Transition>
+    <p v-if="!packing && busy" class="muted">{{ busy }}</p>
 
     <div class="boxed">
       <div class="files-head">
@@ -289,7 +293,13 @@ async function download(item: RemoteItem) {
         </button>
       </div>
 
-      <form v-if="creating" class="new-folder" @submit.prevent="createFolder" @keydown.esc="creating = false">
+      <Transition name="slide">
+      <form
+        v-if="creating"
+        class="new-folder"
+        @submit.prevent="createFolder"
+        @keydown.esc="creating = false"
+      >
         <Icon name="folder" class="muted" />
         <input
           ref="nameInput"
@@ -302,6 +312,7 @@ async function download(item: RemoteItem) {
         <button class="btn btn-primary btn-small" type="submit" :disabled="!newName.trim() || !!busy">Criar</button>
         <button class="btn btn-flat btn-small" type="button" @click="creating = false">Cancelar</button>
       </form>
+      </Transition>
 
       <p v-if="loading" class="empty">Carregando…</p>
       <div v-else-if="!items.length && !creating" class="empty">

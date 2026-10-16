@@ -293,6 +293,7 @@ async function cancel() {
         </div>
       </dl>
 
+      <Transition name="slide">
       <section v-if="running" class="run" aria-live="polite">
         <div class="run-head">
           <strong>{{ activity === "restore" ? "Restaurando…" : "Executando…" }}</strong>
@@ -316,7 +317,9 @@ async function cancel() {
         </p>
         <p v-if="progress?.current" class="path ellipsis">{{ progress.current }}</p>
       </section>
+      </Transition>
 
+      <Transition name="slide">
       <Notice v-if="result" :kind="resultKind" dismissible @close="result = null">
         <p>
           <strong>{{ runStatusLabel[result.status] }}</strong>
@@ -357,7 +360,9 @@ async function cancel() {
           </ul>
         </details>
       </Notice>
+      </Transition>
 
+      <Transition name="slide">
       <Notice
         v-if="restored"
         :kind="restored.skippedCount ? 'warn' : 'ok'"
@@ -378,10 +383,13 @@ async function cancel() {
           </ul>
         </details>
       </Notice>
+      </Transition>
 
-      <Notice v-if="runError" kind="danger" dismissible @close="runError = null">
-        {{ runError }}
-      </Notice>
+      <Transition name="slide">
+        <Notice v-if="runError" kind="danger" dismissible @close="runError = null">
+          {{ runError }}
+        </Notice>
+      </Transition>
 
       <div v-if="sync" class="segmented" role="group" aria-label="Detalhes da tarefa">
         <button
@@ -414,7 +422,11 @@ async function cancel() {
       </div>
     </div>
 
+    <Transition name="slide">
     <div v-if="view && !running" class="task-panel">
+      <!-- Trocar de aba: o conteúdo anterior esmaece e o novo sobe de leve. -->
+      <Transition name="swap" mode="out-in">
+      <div :key="view">
       <template v-if="view === 'preview'">
         <p v-if="preview?.status === 'loading'" class="muted">Calculando a prévia…</p>
         <PlanPreview v-else-if="preview?.status === 'ready'" :preview="preview.data" />
@@ -437,7 +449,10 @@ async function cancel() {
           {{ versions.message }}
         </Notice>
       </template>
+      </div>
+      </Transition>
     </div>
+    </Transition>
   </article>
 </template>
 

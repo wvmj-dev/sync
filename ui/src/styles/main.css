@@ -30,6 +30,16 @@
   --radius-s: 8px;
   --radius: 12px;
   --radius-l: 16px;
+
+  /* Movimento: só em resposta a uma ação, curto e barato para o WebKitGTK — cor e
+     opacidade, nunca largura/altura (refazem o layout a cada quadro). */
+  --motion-fast: 120ms;
+  --motion: 140ms;
+  /* Entrar desacelerando, sair acelerando — e sair mais rápido do que entra. */
+  --motion-in: 180ms;
+  --motion-out: 120ms;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
 }
 
 /* ---- Tokens: escuro (Orchis-Dark) ---- */
@@ -144,6 +154,66 @@ code {
     animation: none !important;
     transition: none !important;
   }
+}
+
+/* ---- Transições do Vue (<Transition name="…">). Só rodam por uma ação — nunca na
+   primeira renderização nem quando os dados recarregam — e só mexem em opacidade e num
+   deslocamento curto (transform): baratos para o WebKitGTK, sem refazer o layout. ---- */
+
+/* Desliza de cima e esmaece, ao entrar e ao sair: avisos, painéis, linhas que abrem. */
+.slide-enter-active {
+  transition:
+    opacity var(--motion-in) var(--ease),
+    transform var(--motion-in) var(--ease);
+}
+
+.slide-leave-active {
+  transition:
+    opacity var(--motion-out) var(--ease-in),
+    transform var(--motion-out) var(--ease-in);
+}
+
+.slide-enter-from,
+.slide-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
+}
+
+/* Troca no mesmo lugar (telas, abas): o que sai esmaece; o que entra sobe de leve. */
+.swap-enter-active {
+  transition:
+    opacity var(--motion-in) var(--ease),
+    transform var(--motion-in) var(--ease);
+}
+
+.swap-leave-active {
+  transition: opacity var(--motion-out) var(--ease-in);
+}
+
+.swap-enter-from {
+  opacity: 0;
+  transform: translateY(6px);
+}
+
+.swap-leave-to {
+  opacity: 0;
+}
+
+/* Resposta ao apontar e ao clicar: a cor muda; o botão afunda de leve ao ser pressionado. */
+.btn,
+.nav-row,
+a.item,
+.segmented button,
+.crumbs button,
+.link-button {
+  transition:
+    background-color var(--motion-fast) var(--ease),
+    color var(--motion-fast) var(--ease),
+    transform var(--motion-fast) var(--ease);
+}
+
+.btn:active:not(:disabled) {
+  transform: scale(0.97);
 }
 
 .muted {
@@ -310,6 +380,21 @@ code {
     margin: 0 12px;
     padding: 0;
     border-radius: 999px;
+  }
+
+  /* Ao expandir, os nomes deslizam da esquerda (recolher é instantâneo: animar a largura
+     refaria o layout da página a cada quadro). */
+  .expanding .brand-name,
+  .expanding .nav-label,
+  .expanding .version {
+    animation: label-in var(--motion-in) var(--ease);
+  }
+}
+
+@keyframes label-in {
+  from {
+    opacity: 0;
+    transform: translateX(-6px);
   }
 }
 
@@ -756,7 +841,7 @@ input[type="checkbox"].switch {
   background: var(--fill-strong);
   appearance: none;
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background-color var(--motion) var(--ease);
 }
 
 input[type="checkbox"].switch::before {
@@ -769,7 +854,7 @@ input[type="checkbox"].switch::before {
   border-radius: 50%;
   background: var(--view);
   box-shadow: 0 1px 2px rgb(0 0 0 / 25%);
-  transition: transform 0.15s;
+  transition: transform var(--motion) var(--ease);
 }
 
 input[type="checkbox"].switch:checked {
@@ -986,7 +1071,7 @@ input[type="checkbox"].switch:checked::before {
   height: 100%;
   border-radius: inherit;
   background: var(--accent);
-  transition: width 0.25s ease;
+  transition: width var(--motion) var(--ease);
 }
 
 /* Total desconhecido (ex.: descompactar .tar.gz). */

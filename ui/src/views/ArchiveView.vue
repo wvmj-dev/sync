@@ -137,8 +137,11 @@ async function extract() {
   </header>
 
   <div class="stack">
-    <Notice v-if="error" kind="danger" dismissible @close="error = null">{{ error }}</Notice>
+    <Transition name="slide">
+      <Notice v-if="error" kind="danger" dismissible @close="error = null">{{ error }}</Notice>
+    </Transition>
 
+    <Transition name="slide">
     <section v-if="busy" class="boxed pad run" aria-live="polite">
       <div class="run-head">
         <strong>{{ busy === "compress" ? "Compactando…" : "Descompactando…" }}</strong>
@@ -157,6 +160,7 @@ async function extract() {
       </p>
       <p v-if="progress?.current" class="path ellipsis">{{ progress.current }}</p>
     </section>
+    </Transition>
   </div>
 
   <section class="section">
@@ -245,6 +249,7 @@ async function extract() {
         </button>
       </div>
 
+      <Transition name="slide">
       <Notice v-if="compressed" kind="ok" dismissible @close="compressed = null">
         <p><strong>Criado:</strong> <span class="path">{{ compressed.path }}</span></p>
         <p class="small num">
@@ -259,6 +264,7 @@ async function extract() {
           </ul>
         </details>
       </Notice>
+      </Transition>
     </div>
   </section>
 
@@ -301,6 +307,7 @@ async function extract() {
         </button>
       </div>
 
+      <Transition name="slide">
       <Notice
         v-if="extracted"
         :kind="extracted.skippedCount ? 'warn' : 'ok'"
@@ -321,6 +328,7 @@ async function extract() {
           </ul>
         </details>
       </Notice>
+      </Transition>
     </div>
   </section>
 </template>

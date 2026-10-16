@@ -70,7 +70,17 @@ e 64 px, sobre fundo claro e escuro.
 - **Texto:** pt-BR, frases curtas em voz ativa, sem jargão interno. O botão diz o que faz
   ("Criar tarefa", não "Enviar"). Erro explica o que houve e como resolver.
 - **Acessibilidade:** foco visível (já global), `aria-label` em botão só de ícone, contraste
-  dos tokens, `prefers-reduced-motion` respeitado. Movimento só no progresso.
+  dos tokens, `prefers-reduced-motion` respeitado (desliga tudo).
+- **Movimento:** só em resposta a uma ação, com `<Transition>` do Vue (não roda na primeira
+  renderização nem quando os dados recarregam) e só opacidade + deslocamento curto
+  (`transform`), baratos para o WebKitGTK. Duas transições globais: `slide` (desliza de cima e
+  esmaece, entrando e saindo — avisos de uma ação, painéis, formulário, linha nova, progresso) e
+  `swap` com `mode="out-in"` (troca no lugar — telas, abas). Ao expandir o menu, os nomes
+  deslizam (`.expanding`); o botão afunda de leve ao clicar. Tokens `--motion-in` (180ms),
+  `--motion-out` (120ms), `--motion-fast` (120ms, cor), `--ease`/`--ease-in`. **Nunca**: animar
+  largura/altura/colunas (refaz o layout a cada quadro), animação CSS em algo que é recriado
+  (pisca enquanto os dados chegam), aviso de estado animado ao abrir a tela, cascata em listas
+  ou laço — só o progresso anima sozinho.
 - **Layout:** o conteúdo (`.main`, até 1040px) fica centralizado na área à direita do menu,
   em qualquer largura de janela. O menu lateral pode ser recolhido (só ícones, 72px; o nome
   vira dica e continua para leitores de tela); a escolha fica salva no navegador.

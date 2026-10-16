@@ -21,8 +21,14 @@ function readCollapsed(): boolean {
   }
 }
 const collapsed = ref(readCollapsed());
+/** Por um instante depois de expandir: os nomes entram deslizando (ver `.expanding`). */
+const expanding = ref(false);
+let expandTimer: ReturnType<typeof setTimeout> | undefined;
 function toggleSidebar() {
   collapsed.value = !collapsed.value;
+  clearTimeout(expandTimer);
+  expanding.value = !collapsed.value;
+  if (expanding.value) expandTimer = setTimeout(() => (expanding.value = false), 400);
   try {
     localStorage.setItem(COLLAPSED_KEY, collapsed.value ? "1" : "0");
   } catch {
@@ -41,7 +47,7 @@ const links: { to: string; label: string; icon: IconName }[] = [
 </script>
 
 <template>
-  <div class="shell" :class="{ collapsed }">
+  <div class="shell" :class="{ collapsed, expanding }">
     <aside class="sidebar">
       <div class="brand">
         <img class="brand-logo" :src="logo" alt="" width="30" height="30" />
@@ -75,10 +81,19 @@ const links: { to: string; label: string; icon: IconName }[] = [
     </aside>
 
     <main class="main">
-      <Notice v-if="store.error" kind="danger" dismissible class="app-error" @close="store.error = null">
-        {{ store.error }}
-      </Notice>
-      <RouterView />
+      <Transition name="slide">
+        <Notice v-if="store.error" kind="danger" dismissible class="app-error" @close="store.error = null">
+          {{ store.error }}
+        </Notice>
+      </Transition>
+      <!-- Troca de tela: a anterior esmaece e a nova sobe de leve. -->
+      <RouterView v-slot="{ Component, route }">
+        <Transition name="swap" mode="out-in">
+          <div :key="route.path">
+            <component :is="Component" />
+          </div>
+        </Transition>
+      </RouterView>
     </main>
   </div>
 </template>

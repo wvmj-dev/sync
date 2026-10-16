@@ -37,14 +37,16 @@ async function remove(job: JobSummary) {
   </header>
 
   <div class="stack">
-    <JobForm
-      v-if="editing !== undefined"
-      :key="editing?.id ?? 'new'"
-      :job="editing"
-      :accounts="store.accounts"
-      @save="save"
-      @cancel="editing = undefined"
-    />
+    <Transition name="slide">
+      <JobForm
+        v-if="editing !== undefined"
+        :key="editing?.id ?? 'new'"
+        :job="editing"
+        :accounts="store.accounts"
+        @save="save"
+        @cancel="editing = undefined"
+      />
+    </Transition>
 
     <div v-if="!store.jobs.length && editing === undefined" class="boxed empty">
       <Icon name="tasks" :size="28" />

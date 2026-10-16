@@ -194,9 +194,11 @@ onMounted(async () => {
       </div>
     </section>
 
-    <Notice v-if="notice" :kind="notice.kind" dismissible @close="notice = null">
-      {{ notice.text }}
-    </Notice>
+    <Transition name="slide">
+      <Notice v-if="notice" :kind="notice.kind" dismissible @close="notice = null">
+        {{ notice.text }}
+      </Notice>
+    </Transition>
 
     <div class="row end">
       <button class="btn btn-flat" type="button" :disabled="!changed || saving" @click="saved && apply(saved)">
@@ -219,8 +221,10 @@ onMounted(async () => {
       </div>
     </div>
 
-    <div class="boxed pad stack">
-      <template v-if="pending">
+    <div class="boxed pad">
+      <!-- "Chave criada" entra no lugar da situação, e volta ao ativar. -->
+      <Transition name="swap" mode="out-in">
+      <div v-if="pending" key="pending" class="stack">
         <div>
           <p><strong>Chave criada.</strong> O arquivo de recuperação foi salvo em:</p>
           <p class="path">{{ pending.recoveryFile }}</p>
@@ -241,9 +245,9 @@ onMounted(async () => {
             Ativar criptografia
           </button>
         </div>
-      </template>
+      </div>
 
-      <template v-else>
+      <div v-else key="status" class="stack">
         <dl class="facts">
           <div>
             <dt>Chave das novas versões</dt>
@@ -273,12 +277,15 @@ onMounted(async () => {
             {{ crypto.active ? "Trocar de chave…" : "Criar chave…" }}
           </button>
         </div>
-      </template>
+      </div>
+      </Transition>
     </div>
 
-    <Notice v-if="cryptoNotice" :kind="cryptoNotice.kind" dismissible @close="cryptoNotice = null">
-      {{ cryptoNotice.text }}
-    </Notice>
+    <Transition name="slide">
+      <Notice v-if="cryptoNotice" :kind="cryptoNotice.kind" dismissible @close="cryptoNotice = null">
+        {{ cryptoNotice.text }}
+      </Notice>
+    </Transition>
   </section>
 </template>
 

@@ -42,7 +42,8 @@ const shots = [
   { name: "23-criptografia-ativa-escuro", theme: "dark", route: "/preferencias", query: "&encrypted", height: 1250 },
   { name: "24-versoes-criptografadas-claro", theme: "light", route: "/tarefas", query: "&encrypted", click: ["Versões"] },
   { name: "25-compactar-criptografia-escuro", theme: "dark", route: "/compactar", query: "&encrypted", height: 1000 },
-  // Por último: o menu recolhido fica salvo no navegador das capturas seguintes.
+  { name: "29-troca-de-tela-claro", theme: "light", route: "/", click: ["Tarefas"] },
+    // Por último: o menu recolhido fica salvo no navegador das capturas seguintes.
   { name: "26-tela-cheia-claro", theme: "light", route: "/", width: 1920, height: 1080 },
   { name: "27-tela-cheia-recolhido-escuro", theme: "dark", route: "/tarefas", click: ["Recolher menu"], width: 1920, height: 1080 },
   { name: "28-recolhido-claro", theme: "light", route: "/preferencias", click: ["Recolher menu"] },
@@ -110,7 +111,7 @@ for (const shot of shots) {
   await sleep(1500);
   for (const text of shot.click ?? []) {
     await send("Runtime.evaluate", {
-      expression: `[...document.querySelectorAll("button")].find(b => b.textContent.trim().includes(${JSON.stringify(text)}))?.click()`,
+      expression: `[...document.querySelectorAll("button, a")].find(b => b.textContent.trim().includes(${JSON.stringify(text)}))?.click()`,
     });
     await sleep(900);
   }
