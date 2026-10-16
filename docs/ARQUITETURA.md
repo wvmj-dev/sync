@@ -74,7 +74,7 @@ src-tauri ──► service ──► gdrive ──► core
 | `crates/gdrive` (`syncly-gdrive`) | lib | Provedor Google Drive: OAuth (PKCE + loopback), chamadas REST v3, upload resumable, classificação de erros, escape de queries. |
 | `crates/service` (`syncly-service`) | lib | Casos de uso (contas, tarefas, prévia, execução, login Google, transferências avulsas, compactação), DTOs da interface, fábrica de provedores, cofre de segredos, logs. |
 | `crates/cli` (`syncly-cli`, binário `syncly`) | bin | Interface de linha de comando; é o que os timers do systemd executam. |
-| `src-tauri` (`syncly-desktop`) | bin | App desktop: registra comandos (allowlist), plugins e eventos de progresso. Bandeja na fase 3. |
+| `src-tauri` (`syncly-desktop`) | bin | App desktop: registra comandos (allowlist), plugins e eventos de progresso. |
 | `ui/` | Vue 3 + TS | Telas. Toda chamada ao Rust passa por `ui/src/api/`. |
 
 ## 4. Estrutura de pastas
@@ -367,8 +367,8 @@ Planejado: criptografia `age` com manifesto (fase 2e).
 | 2d | Receber: rotina de recebimento, baixar e descompactar, enviar pasta compactada (RN-107 a RN-110) | ✅ |
 | 2e | Criptografia (age) e manifesto das versões | |
 | 3a | Agendamento (timers do systemd), notificações, adiar sem rede (RN-84), conta a reconectar (RN-06, RN-85), Preferências | ✅ |
-| 3b | Ícone na bandeja | |
-| 4 | Changes API, download/bidirecional (requer decisão sobre escopo — ver SEG-03) | |
+| 3b | Ícone na bandeja | fora do plano: o GNOME só mostra com a extensão AppIndicator, e o agendamento e as notificações já funcionam com o app fechado |
+| 4 | Changes API, download/bidirecional (requer decisão sobre escopo — ver SEG-03) | adiada: mantém `drive.file` (decisão de 2026-10-16) |
 | 5 | Outros provedores (OneDrive, Dropbox, S3), macOS/Windows | |
 
 Limitações conhecidas:

@@ -10,8 +10,9 @@ App desktop para sincronizar e fazer backup de pastas com o Google Drive (outros
 provedores depois). Tauri 2 + Rust (núcleo) + Vue 3/TypeScript (UI) + CLI `syncly`.
 Fases concluídas: **0, 1a a 1c, 2a a 2d e 3a** — sincronização (Drive e pasta local), status
 por arquivo, transferências avulsas, compactação, envio compactado com versões (backup),
-restauração, recebimento e agendamento (systemd + notificações) funcionando. Próximas:
-**2e** (criptografia) e **3b** (bandeja). Roadmap em `docs/ARQUITETURA.md` §13.
+restauração, recebimento e agendamento (systemd + notificações) funcionando. Próxima:
+**2e** (criptografia). A bandeja (3b) saiu do plano e a fase 4 está adiada. Roadmap em
+`docs/ARQUITETURA.md` §13.
 
 Fonte da verdade — leia antes de mudar comportamento:
 
@@ -27,9 +28,9 @@ Não presuma que algo existe só porque está nos docs — os docs descrevem o p
 |---|---|
 | Domínio e validações; **executor** (`sync/executor.rs`) com progresso, cancelamento e histórico (limitado, RN-93) | |
 | Varredura local com filtros, `.syncignore`, bloqueios e exclusões | Testar o recebimento entre dois computadores (RN-107) |
-| Planejador, guardas, política de retry, retenção (funções puras) | Ícone na bandeja |
+| Planejador, guardas, política de retry, retenção (funções puras) | Ícone na bandeja (fora do plano: o GNOME não mostra sem extensão) |
 | Estado em SQLite, config TOML, trava por tarefa, logs em arquivo | |
-| `LocalProvider` (cache de hashes em `.syncly-cache/`) e `GDriveProvider` (Drive: OAuth PKCE, keyring, limitador, retry, envio retomável); listagem do destino em paralelo | Changes API, download/bidirecional |
+| `LocalProvider` (cache de hashes em `.syncly-cache/`) e `GDriveProvider` (Drive: OAuth PKCE, keyring, limitador, retry, envio retomável); listagem do destino em paralelo | Changes API, download/bidirecional (fase 4, adiada: mantém `drive.file`) |
 | **Prévia** de sincronização (CLI e UI); enviar/listar/baixar arquivos avulsos e criar pasta (`syncly remote`, tela Arquivos) | |
 | Compactar/descompactar zip e tar (`core/src/archive/`, `syncly archive`, tela Compactar) | |
 | **Envio compactado** (`Delivery::Archive`, `service/src/delivery.rs`): versões com data, retenção, pula se nada mudou | Criptografia, manifesto |

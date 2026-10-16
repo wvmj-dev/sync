@@ -31,8 +31,8 @@ e TAR. Tudo verificado por checksum.
 | Sem internet, a execução agendada fica **adiada** e tenta de novo a cada 15 min | ✅ |
 | Login do Google vencido: a conta pede para **reconectar** e os agendamentos dela ficam pausados até lá | ✅ |
 | **Preferências**: o que notificar, transferências simultâneas, reserva de espaço na conta | ✅ |
-| Ícone na bandeja | fase 3b |
-| Sincronização bidirecional | fase 4 |
+| Ícone na bandeja | fora do plano (o GNOME não mostra sem extensão) |
+| Sincronização bidirecional | fase 4, adiada |
 | Outros provedores; macOS e Windows | fase 5 |
 
 ## Segurança
