@@ -4,6 +4,7 @@ import { RouterLink, RouterView } from "vue-router";
 import logo from "./assets/syncly.svg";
 import Icon from "./components/Icon.vue";
 import type { IconName } from "./components/icons";
+import Motion from "./components/Motion.vue";
 import Notice from "./components/Notice.vue";
 import { useAppStore } from "./stores/app";
 
@@ -21,7 +22,8 @@ function readCollapsed(): boolean {
   }
 }
 const collapsed = ref(readCollapsed());
-/** Por um instante depois de expandir: os nomes entram deslizando (ver `.expanding`). */
+/** Por um instante depois de expandir: os nomes entram deslizando (ver `.expanding`). Os
+ * 400 ms passam do movimento e acabam antes da animação do CSS: o fim é marcado aqui. */
 const expanding = ref(false);
 let expandTimer: ReturnType<typeof setTimeout> | undefined;
 function toggleSidebar() {
@@ -81,18 +83,18 @@ const links: { to: string; label: string; icon: IconName }[] = [
     </aside>
 
     <main class="main">
-      <Transition name="slide">
+      <Motion name="slide">
         <Notice v-if="store.error" kind="danger" dismissible class="app-error" @close="store.error = null">
           {{ store.error }}
         </Notice>
-      </Transition>
+      </Motion>
       <!-- Troca de tela: a anterior esmaece e a nova sobe de leve. -->
       <RouterView v-slot="{ Component, route }">
-        <Transition name="swap" mode="out-in">
+        <Motion name="swap" mode="out-in">
           <div :key="route.path">
             <component :is="Component" />
           </div>
-        </Transition>
+        </Motion>
       </RouterView>
     </main>
   </div>

@@ -4,6 +4,7 @@ import { RouterLink } from "vue-router";
 import { api, errorMessage, onArchiveProgress, pickArchive, pickFiles, pickFolder } from "../api";
 import type { ArchiveFormat, ArchiveProgress, CompressResult, ExtractResult } from "../api/types";
 import Icon from "../components/Icon.vue";
+import Motion from "../components/Motion.vue";
 import Notice from "../components/Notice.vue";
 import { archiveFormats as formats, formatBytes } from "../utils/format";
 
@@ -137,11 +138,11 @@ async function extract() {
   </header>
 
   <div class="stack">
-    <Transition name="slide">
+    <Motion name="slide">
       <Notice v-if="error" kind="danger" dismissible @close="error = null">{{ error }}</Notice>
-    </Transition>
+    </Motion>
 
-    <Transition name="slide">
+    <Motion name="slide">
     <section v-if="busy" class="boxed pad run" aria-live="polite">
       <div class="run-head">
         <strong>{{ busy === "compress" ? "Compactando…" : "Descompactando…" }}</strong>
@@ -160,7 +161,7 @@ async function extract() {
       </p>
       <p v-if="progress?.current" class="path ellipsis">{{ progress.current }}</p>
     </section>
-    </Transition>
+    </Motion>
   </div>
 
   <section class="section">
@@ -249,7 +250,7 @@ async function extract() {
         </button>
       </div>
 
-      <Transition name="slide">
+      <Motion name="slide">
       <Notice v-if="compressed" kind="ok" dismissible @close="compressed = null">
         <p><strong>Criado:</strong> <span class="path">{{ compressed.path }}</span></p>
         <p class="small num">
@@ -264,7 +265,7 @@ async function extract() {
           </ul>
         </details>
       </Notice>
-      </Transition>
+      </Motion>
     </div>
   </section>
 
@@ -307,7 +308,7 @@ async function extract() {
         </button>
       </div>
 
-      <Transition name="slide">
+      <Motion name="slide">
       <Notice
         v-if="extracted"
         :kind="extracted.skippedCount ? 'warn' : 'ok'"
@@ -328,7 +329,7 @@ async function extract() {
           </ul>
         </details>
       </Notice>
-      </Transition>
+      </Motion>
     </div>
   </section>
 </template>

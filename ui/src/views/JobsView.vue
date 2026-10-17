@@ -5,6 +5,7 @@ import type { JobDraft, JobSummary } from "../api/types";
 import JobCard from "../components/JobCard.vue";
 import Icon from "../components/Icon.vue";
 import JobForm from "../components/JobForm.vue";
+import Motion from "../components/Motion.vue";
 import { useAppStore } from "../stores/app";
 
 const store = useAppStore();
@@ -37,7 +38,7 @@ async function remove(job: JobSummary) {
   </header>
 
   <div class="stack">
-    <Transition name="slide">
+    <Motion name="slide">
       <JobForm
         v-if="editing !== undefined"
         :key="editing?.id ?? 'new'"
@@ -46,7 +47,7 @@ async function remove(job: JobSummary) {
         @save="save"
         @cancel="editing = undefined"
       />
-    </Transition>
+    </Motion>
 
     <div v-if="!store.jobs.length && editing === undefined" class="boxed empty">
       <Icon name="tasks" :size="28" />

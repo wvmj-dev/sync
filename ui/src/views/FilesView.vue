@@ -5,6 +5,7 @@ import { api, errorMessage, onArchiveProgress, pickFiles, pickFolder } from "../
 import type { ArchiveFormat, ArchiveProgress, RemoteItem } from "../api/types";
 import { useAppStore } from "../stores/app";
 import Icon from "../components/Icon.vue";
+import Motion from "../components/Motion.vue";
 import Notice from "../components/Notice.vue";
 import { archiveFormats, formatBytes, formatDate, formatRelative } from "../utils/format";
 
@@ -251,13 +252,13 @@ async function download(item: RemoteItem) {
       </span>
     </div>
 
-    <Transition name="slide">
+    <Motion name="slide">
       <Notice v-if="notice" :kind="notice.kind === 'warning' ? 'warn' : notice.kind" dismissible @close="notice = null">
         {{ notice.text }}
       </Notice>
-    </Transition>
+    </Motion>
 
-    <Transition name="slide">
+    <Motion name="slide">
     <section v-if="packing" class="boxed pad run" aria-live="polite">
       <div class="run-head">
         <strong>{{ busy }}</strong>
@@ -275,7 +276,7 @@ async function download(item: RemoteItem) {
       </p>
       <p v-if="progress?.current" class="path ellipsis">{{ progress.current }}</p>
     </section>
-    </Transition>
+    </Motion>
     <p v-if="!packing && busy" class="muted">{{ busy }}</p>
 
     <div class="boxed">
@@ -293,7 +294,7 @@ async function download(item: RemoteItem) {
         </button>
       </div>
 
-      <Transition name="slide">
+      <Motion name="slide">
       <form
         v-if="creating"
         class="new-folder"
@@ -312,7 +313,7 @@ async function download(item: RemoteItem) {
         <button class="btn btn-primary btn-small" type="submit" :disabled="!newName.trim() || !!busy">Criar</button>
         <button class="btn btn-flat btn-small" type="button" @click="creating = false">Cancelar</button>
       </form>
-      </Transition>
+      </Motion>
 
       <p v-if="loading" class="empty">Carregando…</p>
       <div v-else-if="!items.length && !creating" class="empty">

@@ -148,6 +148,12 @@ code {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  /* Zerados, o <Motion> também troca na hora, sem esperar. */
+  :root {
+    --motion-in: 0ms;
+    --motion-out: 0ms;
+  }
+
   *,
   *::before,
   *::after {
@@ -156,50 +162,83 @@ code {
   }
 }
 
-/* ---- Transições do Vue (<Transition name="…">). Só rodam por uma ação — nunca na
-   primeira renderização nem quando os dados recarregam — e só mexem em opacidade e num
-   deslocamento curto (transform): baratos para o WebKitGTK, sem refazer o layout. ---- */
+/* ---- Transições do Vue, sempre pelo componente <Motion name="…">. Só rodam por uma ação —
+   nunca na primeira renderização nem quando os dados recarregam — e só mexem em opacidade e
+   num deslocamento curto (transform): baratos para o WebKitGTK, sem refazer o layout.
+
+   Opacidade e transform rodam no compositor do WebKitGTK; se ele chega sozinho ao fim da
+   animação, mostra por 1 a 3 quadros o valor antigo da camada (a tela que saía volta
+   inteira, a que entrou pisca). Por isso cada animação dura 5× o movimento, chega ao valor
+   final em 20% e fica parada nele: quem a encerra é o <Motion>, na duração do token, bem
+   antes do compositor. Mudou o 5×? Mude os 20% junto. ---- */
 
 /* Desliza de cima e esmaece, ao entrar e ao sair: avisos, painéis, linhas que abrem. */
 .slide-enter-active {
-  transition:
-    opacity var(--motion-in) var(--ease),
-    transform var(--motion-in) var(--ease);
+  animation: slide-in calc(var(--motion-in) * 5) linear both;
 }
 
 .slide-leave-active {
-  transition:
-    opacity var(--motion-out) var(--ease-in),
-    transform var(--motion-out) var(--ease-in);
+  animation: slide-out calc(var(--motion-out) * 5) linear both;
 }
 
-.slide-enter-from,
-.slide-leave-to {
-  opacity: 0;
-  transform: translateY(-6px);
+@keyframes slide-in {
+  0% {
+    opacity: 0;
+    transform: translateY(-6px);
+    animation-timing-function: var(--ease);
+  }
+  20%,
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes slide-out {
+  0% {
+    animation-timing-function: var(--ease-in);
+  }
+  20%,
+  100% {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
 }
 
 /* Troca no mesmo lugar (telas, abas): o que sai esmaece; o que entra sobe de leve. */
 .swap-enter-active {
-  transition:
-    opacity var(--motion-in) var(--ease),
-    transform var(--motion-in) var(--ease);
+  animation: swap-in calc(var(--motion-in) * 5) linear both;
 }
 
 .swap-leave-active {
-  transition: opacity var(--motion-out) var(--ease-in);
+  animation: swap-out calc(var(--motion-out) * 5) linear both;
 }
 
-.swap-enter-from {
-  opacity: 0;
-  transform: translateY(6px);
+@keyframes swap-in {
+  0% {
+    opacity: 0;
+    transform: translateY(6px);
+    animation-timing-function: var(--ease);
+  }
+  20%,
+  100% {
+    opacity: 1;
+    transform: none;
+  }
 }
 
-.swap-leave-to {
-  opacity: 0;
+@keyframes swap-out {
+  0% {
+    animation-timing-function: var(--ease-in);
+  }
+  20%,
+  100% {
+    opacity: 0;
+  }
 }
 
-/* Resposta ao apontar e ao clicar: a cor muda; o botão afunda de leve ao ser pressionado. */
+/* Resposta ao apontar e ao clicar: a cor muda; o botão afunda de leve ao ser pressionado —
+   na hora: uma transição de transform terminaria no compositor e piscaria (ver acima). */
 .btn,
 .nav-row,
 a.item,
@@ -208,8 +247,7 @@ a.item,
 .link-button {
   transition:
     background-color var(--motion-fast) var(--ease),
-    color var(--motion-fast) var(--ease),
-    transform var(--motion-fast) var(--ease);
+    color var(--motion-fast) var(--ease);
 }
 
 .btn:active:not(:disabled) {
@@ -383,18 +421,25 @@ a.item,
   }
 
   /* Ao expandir, os nomes deslizam da esquerda (recolher é instantâneo: animar a largura
-     refaria o layout da página a cada quadro). */
+     refaria o layout da página a cada quadro). Como nas transições do Vue, a animação dura
+     5× o movimento e quem a encerra é o App.vue, ao tirar `.expanding`. */
   .expanding .brand-name,
   .expanding .nav-label,
   .expanding .version {
-    animation: label-in var(--motion-in) var(--ease);
+    animation: label-in calc(var(--motion-in) * 5) linear both;
   }
 }
 
 @keyframes label-in {
-  from {
+  0% {
     opacity: 0;
     transform: translateX(-6px);
+    animation-timing-function: var(--ease);
+  }
+  20%,
+  100% {
+    opacity: 1;
+    transform: none;
   }
 }
 
@@ -854,7 +899,8 @@ input[type="checkbox"].switch::before {
   border-radius: 50%;
   background: var(--view);
   box-shadow: 0 1px 2px rgb(0 0 0 / 25%);
-  transition: transform var(--motion) var(--ease);
+  /* `left`, não transform: fica fora do compositor, que piscaria no fim (ver Transições). */
+  transition: left var(--motion) var(--ease);
 }
 
 input[type="checkbox"].switch:checked {
@@ -862,7 +908,7 @@ input[type="checkbox"].switch:checked {
 }
 
 input[type="checkbox"].switch:checked::before {
-  transform: translateX(18px);
+  left: 21px;
   background: #ffffff;
 }
 

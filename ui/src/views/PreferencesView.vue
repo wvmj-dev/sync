@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from "vue";
 import { api, errorMessage, pickFile, pickFolder } from "../api";
 import type { EncryptionStatus, NewEncryptionKey, NotifyPolicy, Preferences } from "../api/types";
+import Motion from "../components/Motion.vue";
 import Notice from "../components/Notice.vue";
 import { plural } from "../utils/format";
 
@@ -194,11 +195,11 @@ onMounted(async () => {
       </div>
     </section>
 
-    <Transition name="slide">
+    <Motion name="slide">
       <Notice v-if="notice" :kind="notice.kind" dismissible @close="notice = null">
         {{ notice.text }}
       </Notice>
-    </Transition>
+    </Motion>
 
     <div class="row end">
       <button class="btn btn-flat" type="button" :disabled="!changed || saving" @click="saved && apply(saved)">
@@ -223,7 +224,7 @@ onMounted(async () => {
 
     <div class="boxed pad">
       <!-- "Chave criada" entra no lugar da situação, e volta ao ativar. -->
-      <Transition name="swap" mode="out-in">
+      <Motion name="swap" mode="out-in">
       <div v-if="pending" key="pending" class="stack">
         <div>
           <p><strong>Chave criada.</strong> O arquivo de recuperação foi salvo em:</p>
@@ -278,14 +279,14 @@ onMounted(async () => {
           </button>
         </div>
       </div>
-      </Transition>
+      </Motion>
     </div>
 
-    <Transition name="slide">
+    <Motion name="slide">
       <Notice v-if="cryptoNotice" :kind="cryptoNotice.kind" dismissible @close="cryptoNotice = null">
         {{ cryptoNotice.text }}
       </Notice>
-    </Transition>
+    </Motion>
   </section>
 </template>
 
