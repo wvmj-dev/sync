@@ -1,5 +1,6 @@
 import { flushPromises } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { nextTick } from "vue";
 import App from "./App.vue";
 import { mountApp } from "./testing";
 
@@ -39,5 +40,33 @@ describe("menu lateral", () => {
     expect(again.find(".shell").classes()).toContain("collapsed");
     await again.find("button.collapse-toggle").trigger("click");
     expect(localStorage.getItem("syncly.sidebar.collapsed")).toBe("0");
+  });
+
+  it("marca o deslizar ao fechar e abrir e o encerra depois do movimento", async () => {
+    const wrapper = mountApp(App);
+    await flushPromises();
+    vi.useFakeTimers();
+    try {
+      const shell = () => wrapper.find(".shell").classes();
+      const toggle = wrapper.find("button.collapse-toggle");
+
+      await toggle.trigger("click");
+      expect(shell()).toEqual(expect.arrayContaining(["collapsed", "collapsing"]));
+      // O nome some ainda como "Recolher menu": não troca no meio do esmaecer.
+      expect(toggle.text()).toBe("Recolher menu");
+      vi.advanceTimersByTime(400);
+      await nextTick();
+      expect(shell()).not.toContain("collapsing");
+      expect(toggle.text()).toBe("Expandir menu");
+
+      await toggle.trigger("click");
+      expect(shell()).toContain("expanding");
+      expect(shell()).not.toContain("collapsed");
+      vi.advanceTimersByTime(400);
+      await nextTick();
+      expect(shell()).not.toContain("expanding");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

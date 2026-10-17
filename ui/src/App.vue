@@ -22,15 +22,16 @@ function readCollapsed(): boolean {
   }
 }
 const collapsed = ref(readCollapsed());
-/** Por um instante depois de expandir: os nomes entram deslizando (ver `.expanding`). Os
- * 400 ms passam do movimento e acabam antes da animação do CSS: o fim é marcado aqui. */
-const expanding = ref(false);
-let expandTimer: ReturnType<typeof setTimeout> | undefined;
+/** Enquanto o menu abre ou fecha: os nomes esmaecem junto com a coluna (ver `.expanding` e
+ * `.collapsing` no main.css). Os 400 ms passam do movimento e acabam antes da animação do
+ * CSS: o fim é marcado aqui. */
+const moving = ref<"expanding" | "collapsing" | null>(null);
+let movingTimer: ReturnType<typeof setTimeout> | undefined;
 function toggleSidebar() {
   collapsed.value = !collapsed.value;
-  clearTimeout(expandTimer);
-  expanding.value = !collapsed.value;
-  if (expanding.value) expandTimer = setTimeout(() => (expanding.value = false), 400);
+  clearTimeout(movingTimer);
+  moving.value = collapsed.value ? "collapsing" : "expanding";
+  movingTimer = setTimeout(() => (moving.value = null), 400);
   try {
     localStorage.setItem(COLLAPSED_KEY, collapsed.value ? "1" : "0");
   } catch {
@@ -49,7 +50,7 @@ const links: { to: string; label: string; icon: IconName }[] = [
 </script>
 
 <template>
-  <div class="shell" :class="{ collapsed, expanding }">
+  <div class="shell" :class="[{ collapsed }, moving]">
     <aside class="sidebar">
       <div class="brand">
         <img class="brand-logo" :src="logo" alt="" width="30" height="30" />
@@ -76,7 +77,10 @@ const links: { to: string; label: string; icon: IconName }[] = [
           @click="toggleSidebar"
         >
           <Icon :name="collapsed ? 'sidebarExpand' : 'sidebarCollapse'" :size="20" />
-          <span class="nav-label">{{ collapsed ? "Expandir menu" : "Recolher menu" }}</span>
+          <!-- Ao fechar, o nome some ainda como "Recolher menu" (não troca no meio do esmaecer). -->
+          <span class="nav-label">{{
+            collapsed && moving !== "collapsing" ? "Expandir menu" : "Recolher menu"
+          }}</span>
         </button>
         <p class="version">Versão {{ store.info?.version ?? "…" }}</p>
       </div>

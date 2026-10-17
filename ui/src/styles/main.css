@@ -318,6 +318,7 @@ a.item,
 /* O mesmo desenho do ícone do app (ui/src/assets/syncly.svg). */
 .brand-logo {
   display: block;
+  flex: none;
   width: 30px;
   height: 30px;
 }
@@ -342,6 +343,7 @@ a.item,
 }
 
 .nav-row svg {
+  flex: none;
   color: var(--fg-2);
 }
 
@@ -391,42 +393,87 @@ a.item,
 }
 
 /* ---- Menu recolhido: só os ícones (o nome aparece ao apontar e continua para leitores
-   de tela). Só no desktop — no celular o menu já é uma barra no topo. ---- */
+   de tela). Só no desktop — no celular o menu já é uma barra no topo.
+
+   Abrir e fechar desliza: a coluna anima a largura (240 ↔ 72px) e a página acompanha. É a
+   única animação de layout do app: roda no thread principal, então não tem o defeito do fim
+   no compositor (ver Transições). Os ícones ficam (quase) no lugar e a borda passa por cima
+   dos nomes, que esmaecem junto — `.collapsing`/`.expanding`, encerradas pelo App.vue
+   como as do <Motion>. ---- */
 @media (min-width: 761px) {
   .shell.collapsed {
     grid-template-columns: 72px minmax(0, 1fr);
   }
 
-  .collapsed .brand {
-    justify-content: center;
-    padding: 0;
-  }
-
-  .collapsed .brand-name,
-  .collapsed .nav-label,
-  .collapsed .version {
-    position: absolute;
-    width: 1px;
-    height: 1px;
+  /* Os nomes não quebram linha: são cortados a 12px da borda da coluna. */
+  .brand,
+  .nav-row,
+  .version {
     overflow: hidden;
-    clip-path: inset(50%);
     white-space: nowrap;
   }
 
-  .collapsed .nav-row {
-    justify-content: center;
-    margin: 0 12px;
-    padding: 0;
-    border-radius: 999px;
+  .brand,
+  .version {
+    margin-right: 12px;
   }
 
-  /* Ao expandir, os nomes deslizam da esquerda (recolher é instantâneo: animar a largura
-     refaria o layout da página a cada quadro). Como nas transições do Vue, a animação dura
-     5× o movimento e quem a encerra é o App.vue, ao tirar `.expanding`. */
+  .nav-row {
+    border-radius: 0 20px 20px 0;
+  }
+
+  /* Recolhido: pílula de 48px no meio da coluna; o nome fica logo depois dela, cortado. */
+  .collapsed .nav-row {
+    margin: 0 12px;
+    padding: 0 0 0 14px;
+    border-radius: 20px;
+  }
+
+  /* As transições de layout só existem enquanto o menu abre ou fecha (classes do App.vue):
+     redimensionar a janela, inclusive passando de 760px, não anima nada. */
+  .shell.collapsing,
+  .shell.expanding {
+    transition: grid-template-columns var(--motion-in) var(--ease);
+  }
+
+  .collapsing .nav-row,
+  .expanding .nav-row {
+    transition:
+      background-color var(--motion-fast) var(--ease),
+      color var(--motion-fast) var(--ease),
+      margin var(--motion-in) var(--ease),
+      padding var(--motion-in) var(--ease),
+      border-radius var(--motion-in) var(--ease);
+  }
+
+  /* "Versão…" não cabe nem em parte: depois de fechar, só para leitores de tela. */
+  .collapsed:not(.collapsing) .version {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    clip-path: inset(50%);
+  }
+
+  .collapsing .brand-name,
+  .collapsing .nav-label,
+  .collapsing .version {
+    animation: label-out calc(var(--motion-in) * 5) linear both;
+  }
+
   .expanding .brand-name,
   .expanding .nav-label,
   .expanding .version {
     animation: label-in calc(var(--motion-in) * 5) linear both;
+  }
+}
+
+@keyframes label-out {
+  0% {
+    animation-timing-function: var(--ease);
+  }
+  20%,
+  100% {
+    opacity: 0;
   }
 }
 

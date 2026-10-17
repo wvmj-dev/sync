@@ -75,17 +75,25 @@ e 64 px, sobre fundo claro e escuro.
   direto; não roda na primeira renderização nem quando os dados recarregam) e só opacidade +
   deslocamento curto (`transform`), baratos para o WebKitGTK. Duas transições: `slide`
   (desliza de cima e esmaece, entrando e saindo — avisos de uma ação, painéis, formulário,
-  linha nova, progresso) e `swap` com `mode="out-in"` (troca no lugar — telas, abas). Ao
-  expandir o menu, os nomes deslizam (`.expanding`); o botão afunda de leve ao clicar, sem
+  linha nova, progresso) e `swap` com `mode="out-in"` (troca no lugar — telas, abas). O
+  menu lateral abre e fecha deslizando (abaixo); o botão afunda de leve ao clicar, sem
   transição. Tokens `--motion-in` (180ms), `--motion-out` (120ms), `--motion-fast` (120ms,
   cor), `--ease`/`--ease-in`. **Nunca**: animar largura/altura/colunas (refaz o layout a cada
-  quadro), animação CSS em algo que é recriado (pisca enquanto os dados chegam), aviso de
-  estado animado ao abrir a tela, cascata em listas ou laço — só o progresso anima sozinho.
+  quadro — a única exceção é o menu lateral), animação CSS em algo que é recriado (pisca
+  enquanto os dados chegam), aviso de estado animado ao abrir a tela, cascata em listas ou
+  laço — só o progresso anima sozinho.
+- **Menu lateral deslizando:** a coluna anima a largura (240 ↔ 72px, `--motion-in`) e a página
+  acompanha. É layout, então roda no thread principal e não tem o defeito do compositor
+  (abaixo). Os ícones ficam quase no lugar: a borda passa por cima dos nomes, que não quebram
+  linha e são cortados pela própria linha (`overflow: hidden`; o ícone com `flex: none`, senão
+  encolhe e deixa o nome aparecer). As transições de layout só existem durante
+  `.collapsing`/`.expanding` (classes do App.vue): redimensionar a janela não anima nada.
 - **Fim da animação no WebKitGTK:** opacidade e `transform` rodam no compositor, e quando ele
   chega sozinho ao fim de uma animação mostra por 1 a 3 quadros o valor antigo (a tela que
   saía volta inteira, a que entrou pisca). Por isso essas animações duram 5× o movimento,
   param no valor final em 20% e quem as encerra é o JS — o `<Motion>`, pela duração dos
-  tokens, e o App.vue, ao tirar `.expanding`. Transição CSS de opacidade ou `transform` que
+  tokens, e o App.vue, ao tirar `.collapsing`/`.expanding` (os nomes do menu esmaecem
+  assim). Transição CSS de opacidade ou `transform` que
   termina sozinha não pode; num elemento pequeno, anime `left` ou cor (como o interruptor).
   O Chrome não mostra esse defeito: confira no app (`pnpm tauri dev`).
 - **Layout:** o conteúdo (`.main`, até 1040px) fica centralizado na área à direita do menu,
